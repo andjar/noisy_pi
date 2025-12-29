@@ -56,13 +56,13 @@ check_dependencies() {
 test_icecast() {
     log_info "Testing BirdNET-Pi Icecast stream..."
     
+    # Icecast typically runs on port 8000
     # Use --max-time to prevent hanging on continuous stream
-    # Just check if we can connect and get some data
-    if curl -s --connect-timeout 5 --max-time 3 http://localhost/stream -o /dev/null 2>/dev/null; then
-        log_info "Icecast stream is available"
+    if curl -s --connect-timeout 5 --max-time 3 http://localhost:8000/stream -o /dev/null 2>/dev/null; then
+        log_info "Icecast stream is available on port 8000"
         return 0
     else
-        log_warn "Icecast stream not available at http://localhost/stream"
+        log_warn "Icecast stream not available at http://localhost:8000/stream"
         log_warn "Make sure BirdNET-Pi is running and Icecast is enabled"
         return 1
     fi
@@ -74,7 +74,7 @@ test_audio() {
     
     local output
     # Use timeout command as extra protection
-    if output=$(timeout 10 ffmpeg -hide_banner -i http://localhost/stream -t 2 -af volumedetect -f null - 2>&1); then
+    if output=$(timeout 10 ffmpeg -hide_banner -i http://localhost:8000/stream -t 2 -af volumedetect -f null - 2>&1); then
         if echo "$output" | grep -q "mean_volume"; then
             local mean_db=$(echo "$output" | grep "mean_volume" | sed 's/.*mean_volume: \([-0-9.]*\).*/\1/')
             log_info "Audio capture working! Mean volume: ${mean_db} dB"

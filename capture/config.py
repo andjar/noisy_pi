@@ -15,7 +15,7 @@ LOG_PATH = os.path.join(LOG_DIR, 'capture.log')
 CONFIG_PATH = os.path.join(CONFIG_DIR, 'noisy.json')
 
 # Audio capture settings - ICECAST STREAM
-ICECAST_URL = "http://localhost/stream"  # BirdNET-Pi's Icecast stream
+ICECAST_URL = "http://localhost:8000/stream"  # BirdNET-Pi's Icecast stream (default port)
 SAMPLE_RATE = 48000
 CHANNELS = 1  # Convert to mono for analysis
 

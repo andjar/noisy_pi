@@ -78,7 +78,7 @@ Edit `/opt/noisy-pi/config/noisy.json`:
 
 ```json
 {
-    "icecast_url": "http://localhost/stream",
+    "icecast_url": "http://localhost:8000/stream",
     "sample_rate": 48000,
     "sample_duration": 15,
     "sample_interval": 30,
@@ -94,7 +94,7 @@ Edit `/opt/noisy-pi/config/noisy.json`:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `icecast_url` | `http://localhost/stream` | BirdNET-Pi Icecast stream URL |
+| `icecast_url` | `http://localhost:8000/stream` | BirdNET-Pi Icecast stream URL |
 | `sample_duration` | `15` | Duration of each audio sample (seconds) |
 | `sample_interval` | `30` | Time between samples (seconds) |
 | `anomaly_threshold` | `2.5` | Z-score threshold for anomaly detection |

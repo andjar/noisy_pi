@@ -1,5 +1,5 @@
 {
-    "icecast_url": "http://localhost/stream",
+    "icecast_url": "http://localhost:8000/stream",
     "sample_rate": 48000,
     "sample_duration": 15,
     "sample_interval": 30,
