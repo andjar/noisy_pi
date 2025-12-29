@@ -1,0 +1,17 @@
+{
+    "sample_rate": 48000,
+    "fft_bins": 256,
+    "snapshot_duration": 3.0,
+    "snapshots_per_interval": 10,
+    "db_min": -90,
+    "db_max": 10,
+    "anomaly_threshold": 2.0,
+    "web_port": 8080,
+    "baseline_lookback_days": 14,
+    "baseline_min_samples": 100,
+    
+    "save_anomaly_snippets": false,
+    "snippet_duration": 5.0,
+    "snippet_threshold": 2.5
+}
+

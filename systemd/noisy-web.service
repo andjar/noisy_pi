@@ -1,0 +1,29 @@
+[Unit]
+Description=Noisy Pi Web Dashboard
+Documentation=https://github.com/YOUR_USERNAME/noisy-pi
+After=network.target noisy-capture.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/noisy-pi/web
+Environment="NOISY_PI_DATA=/var/lib/noisy-pi"
+ExecStart=/usr/bin/php -S 0.0.0.0:8080 -t /opt/noisy-pi/web
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=append:/var/log/noisy-pi/web.log
+StandardError=append:/var/log/noisy-pi/web.log
+
+# Security
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/noisy-pi /var/log/noisy-pi
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+

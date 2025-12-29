@@ -1,0 +1,33 @@
+[Unit]
+Description=Noisy Pi Capture Daemon
+Documentation=https://github.com/YOUR_USERNAME/noisy-pi
+After=network.target sound.target pulseaudio.service
+Wants=pulseaudio.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/noisy-pi/capture
+Environment="NOISY_PI_DIR=/opt/noisy-pi"
+Environment="NOISY_PI_DATA=/var/lib/noisy-pi"
+Environment="NOISY_PI_LOG=/var/log/noisy-pi"
+Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse"
+ExecStart=/usr/bin/python3 /opt/noisy-pi/capture/capture_daemon.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/var/log/noisy-pi/capture.log
+StandardError=append:/var/log/noisy-pi/capture.log
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/noisy-pi /var/log/noisy-pi
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+
