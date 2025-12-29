@@ -4,6 +4,7 @@
 *.db-shm
 data/*.db
 logs/*.log
+*.png
 
 # Snippets
 data/snippets/
