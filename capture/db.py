@@ -23,20 +23,27 @@ def init_db():
                 max_db REAL,
                 min_db REAL,
                 
-                -- Percentiles (dB) - estimated from samples
+                -- Percentiles (dB)
                 l10_db REAL,
                 l50_db REAL,
                 l90_db REAL,
                 
-                -- Frequency band levels (dB)
-                band_low_db REAL,
-                band_mid_db REAL,
-                band_high_db REAL,
+                -- 7 frequency bands (dB) covering 0-24kHz
+                band_0_200 REAL,      -- 0-200 Hz (sub-bass, bass)
+                band_200_500 REAL,    -- 200-500 Hz (low-mid)
+                band_500_1k REAL,     -- 500-1000 Hz (mid)
+                band_1k_2k REAL,      -- 1-2 kHz (upper-mid)
+                band_2k_4k REAL,      -- 2-4 kHz (presence)
+                band_4k_8k REAL,      -- 4-8 kHz (brilliance)
+                band_8k_24k REAL,     -- 8-24 kHz (air/ultrasonic)
+                
+                -- Spectral features
+                spectral_centroid REAL,
+                spectral_flatness REAL,
+                dominant_freq REAL,
                 
                 -- Other metrics
                 silence_pct REAL,
-                peak_freq_hz REAL,
-                crest_factor REAL,
                 dynamic_range REAL,
                 
                 -- Anomaly
@@ -49,8 +56,10 @@ def init_db():
                 sample_seconds REAL,
                 status TEXT DEFAULT 'ok',
                 
-                -- Spectrogram (compressed)
-                spectrogram BLOB
+                -- Spectrogram (compressed 8-bit, n_snapshots x n_bins)
+                spectrogram BLOB,
+                spectrogram_snapshots INTEGER DEFAULT 10,
+                spectrogram_bins INTEGER DEFAULT 256
             );
             
             CREATE INDEX IF NOT EXISTS idx_timestamp ON measurements(timestamp);
@@ -112,15 +121,21 @@ def store_measurement(data: dict) -> int:
             INSERT INTO measurements (
                 timestamp, unix_time, mean_db, max_db, min_db,
                 l10_db, l50_db, l90_db,
-                band_low_db, band_mid_db, band_high_db,
-                silence_pct, peak_freq_hz, crest_factor, dynamic_range,
-                anomaly_score, sample_seconds, status, spectrogram
+                band_0_200, band_200_500, band_500_1k, band_1k_2k,
+                band_2k_4k, band_4k_8k, band_8k_24k,
+                spectral_centroid, spectral_flatness, dominant_freq,
+                silence_pct, dynamic_range,
+                anomaly_score, sample_seconds, status,
+                spectrogram, spectrogram_snapshots, spectrogram_bins
             ) VALUES (
                 :timestamp, :unix_time, :mean_db, :max_db, :min_db,
                 :l10_db, :l50_db, :l90_db,
-                :band_low_db, :band_mid_db, :band_high_db,
-                :silence_pct, :peak_freq_hz, :crest_factor, :dynamic_range,
-                :anomaly_score, :sample_seconds, :status, :spectrogram
+                :band_0_200, :band_200_500, :band_500_1k, :band_1k_2k,
+                :band_2k_4k, :band_4k_8k, :band_8k_24k,
+                :spectral_centroid, :spectral_flatness, :dominant_freq,
+                :silence_pct, :dynamic_range,
+                :anomaly_score, :sample_seconds, :status,
+                :spectrogram, :spectrogram_snapshots, :spectrogram_bins
             )
         ''', data)
         conn.commit()
@@ -147,7 +162,6 @@ def update_baseline(day_of_week: int, hour: int, mean_db: float):
         return
     
     with get_connection() as conn:
-        # Get current values
         row = conn.execute('''
             SELECT mean_db_avg, mean_db_std, samples
             FROM baseline
@@ -159,14 +173,12 @@ def update_baseline(day_of_week: int, hour: int, mean_db: float):
         
         avg, std, samples = row['mean_db_avg'], row['mean_db_std'], row['samples']
         
-        # Exponential moving average (alpha = 0.1)
         alpha = 0.1
         if samples == 0:
             new_avg = mean_db
             new_std = std
         else:
             new_avg = avg * (1 - alpha) + mean_db * alpha
-            # Update std only after enough samples
             if samples >= 10:
                 new_std = (std * std * (1 - alpha) + (mean_db - avg) ** 2 * alpha) ** 0.5
             else:
@@ -198,4 +210,3 @@ def get_recent_measurements(limit: int = 100):
             ORDER BY unix_time DESC
             LIMIT ?
         ''', (limit,)).fetchall()
-

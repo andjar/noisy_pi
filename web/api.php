@@ -17,7 +17,6 @@ $db_file = $db_path . '/noisy.db';
 $config_path = (getenv('NOISY_CONFIG_DIR') ?: '/opt/noisy-pi/config') . '/noisy.json';
 $snippets_dir = $db_path . '/snippets';
 
-// Open database
 function get_db($readonly = true) {
     global $db_file;
     if (!file_exists($db_file)) {
@@ -29,7 +28,6 @@ function get_db($readonly = true) {
     return new SQLite3($db_file, $flags);
 }
 
-// Get request parameter
 $action = $_GET['action'] ?? 'recent';
 
 switch ($action) {
@@ -41,8 +39,10 @@ switch ($action) {
         $stmt = $db->prepare('
             SELECT id, timestamp, unix_time, mean_db, max_db, min_db,
                    l10_db, l50_db, l90_db,
-                   band_low_db, band_mid_db, band_high_db,
-                   silence_pct, peak_freq_hz, crest_factor, dynamic_range,
+                   band_0_200, band_200_500, band_500_1k, band_1k_2k,
+                   band_2k_4k, band_4k_8k, band_8k_24k,
+                   spectral_centroid, spectral_flatness, dominant_freq,
+                   silence_pct, dynamic_range,
                    anomaly_score, annotation, sample_seconds, status
             FROM measurements
             ORDER BY unix_time DESC
@@ -59,29 +59,63 @@ switch ($action) {
         echo json_encode(['data' => $rows]);
         break;
         
-    case 'range':
-        $start = $_GET['start'] ?? date('Y-m-d', strtotime('-1 day'));
-        $end = $_GET['end'] ?? date('Y-m-d');
+    case 'spectrogram':
+        $id = intval($_GET['id'] ?? 0);
+        if ($id <= 0) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid ID']);
+            exit;
+        }
         
         $db = get_db();
         $stmt = $db->prepare('
-            SELECT timestamp, unix_time, mean_db, max_db, min_db,
-                   band_low_db, band_mid_db, band_high_db,
-                   silence_pct, anomaly_score
-            FROM measurements
-            WHERE timestamp >= :start AND timestamp < :end
-            ORDER BY timestamp ASC
+            SELECT spectrogram, spectrogram_snapshots, spectrogram_bins, timestamp
+            FROM measurements WHERE id = :id
         ');
-        $stmt->bindValue(':start', $start, SQLITE3_TEXT);
-        $stmt->bindValue(':end', $end . ' 23:59:59', SQLITE3_TEXT);
-        $result = $stmt->execute();
+        $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
+        $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
         
-        $rows = [];
-        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-            $rows[] = $row;
+        if (!$row || !$row['spectrogram']) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Spectrogram not found']);
+            exit;
         }
         
-        echo json_encode(['data' => $rows]);
+        $compressed = $row['spectrogram'];
+        $decompressed = @gzuncompress($compressed);
+        
+        if ($decompressed === false) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to decompress']);
+            exit;
+        }
+        
+        $n_snapshots = $row['spectrogram_snapshots'];
+        $n_bins = $row['spectrogram_bins'];
+        
+        // Convert to array of arrays (dequantize)
+        $data = [];
+        $bytes = unpack('C*', $decompressed);
+        $idx = 1;
+        for ($s = 0; $s < $n_snapshots; $s++) {
+            $spectrum = [];
+            for ($b = 0; $b < $n_bins; $b++) {
+                if (isset($bytes[$idx])) {
+                    // Dequantize: 0-255 -> -90 to 10 dB
+                    $spectrum[] = round(($bytes[$idx] / 255.0) * 100 - 90, 1);
+                    $idx++;
+                }
+            }
+            $data[] = $spectrum;
+        }
+        
+        echo json_encode([
+            'data' => $data,
+            'snapshots' => $n_snapshots,
+            'bins' => $n_bins,
+            'timestamp' => $row['timestamp'],
+            'freq_max' => 24000  // Nyquist for 48kHz
+        ]);
         break;
         
     case 'stats':
@@ -89,7 +123,6 @@ switch ($action) {
         
         $db = get_db();
         
-        // Calculate time threshold
         switch ($period) {
             case '1h': $seconds = 3600; break;
             case '6h': $seconds = 21600; break;
@@ -105,9 +138,14 @@ switch ($action) {
                 MAX(max_db) as max_db,
                 MIN(min_db) as min_db,
                 AVG(silence_pct) as avg_silence,
-                AVG(band_low_db) as avg_band_low,
-                AVG(band_mid_db) as avg_band_mid,
-                AVG(band_high_db) as avg_band_high,
+                AVG(band_0_200) as avg_band_0_200,
+                AVG(band_200_500) as avg_band_200_500,
+                AVG(band_500_1k) as avg_band_500_1k,
+                AVG(band_1k_2k) as avg_band_1k_2k,
+                AVG(band_2k_4k) as avg_band_2k_4k,
+                AVG(band_4k_8k) as avg_band_4k_8k,
+                AVG(band_8k_24k) as avg_band_8k_24k,
+                AVG(spectral_centroid) as avg_centroid,
                 COUNT(*) as count,
                 SUM(CASE WHEN anomaly_score >= 2.5 THEN 1 ELSE 0 END) as anomalies
             FROM measurements
@@ -144,6 +182,7 @@ switch ($action) {
                 AVG(mean_db) as avg_db,
                 MAX(max_db) as max_db,
                 MIN(min_db) as min_db,
+                AVG(spectral_centroid) as avg_centroid,
                 COUNT(*) as count,
                 SUM(CASE WHEN anomaly_score >= 2.5 THEN 1 ELSE 0 END) as anomaly_count
             FROM measurements
@@ -157,22 +196,6 @@ switch ($action) {
         $rows = [];
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
             $row['hour'] = intval($row['hour']);
-            $rows[] = $row;
-        }
-        
-        echo json_encode(['data' => $rows]);
-        break;
-        
-    case 'baseline':
-        $db = get_db();
-        $result = $db->query('
-            SELECT day_of_week, hour, mean_db_avg, mean_db_std, samples
-            FROM baseline
-            ORDER BY day_of_week, hour
-        ');
-        
-        $rows = [];
-        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
             $rows[] = $row;
         }
         
@@ -209,9 +232,7 @@ switch ($action) {
         $db = get_db();
         $stmt = $db->prepare('
             SELECT id, timestamp, filename, anomaly_score, measurement_id
-            FROM snippets
-            ORDER BY timestamp DESC
-            LIMIT 50
+            FROM snippets ORDER BY timestamp DESC LIMIT 50
         ');
         $result = $stmt->execute();
         
@@ -239,7 +260,6 @@ switch ($action) {
         
         header('Content-Type: audio/ogg');
         header('Content-Length: ' . filesize($filepath));
-        header('Cache-Control: public, max-age=86400');
         readfile($filepath);
         exit;
         
@@ -260,20 +280,14 @@ switch ($action) {
         }
         
         $db = get_db(false);
-        
-        // Get filename first
         $stmt = $db->prepare('SELECT filename FROM snippets WHERE id = :id');
         $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
         $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
         
         if ($row) {
-            // Delete file
             $filepath = $snippets_dir . '/' . $row['filename'];
-            if (file_exists($filepath)) {
-                unlink($filepath);
-            }
+            if (file_exists($filepath)) unlink($filepath);
             
-            // Delete database entry
             $stmt = $db->prepare('DELETE FROM snippets WHERE id = :id');
             $stmt->bindValue(':id', $id, SQLITE3_INTEGER);
             $stmt->execute();
@@ -288,36 +302,6 @@ switch ($action) {
             exit;
         }
         echo file_get_contents($config_path);
-        break;
-        
-    case 'save_config':
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            http_response_code(405);
-            echo json_encode(['error' => 'POST required']);
-            exit;
-        }
-        
-        $input = json_decode(file_get_contents('php://input'), true);
-        if (!$input) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Invalid JSON']);
-            exit;
-        }
-        
-        // Merge with existing config
-        $existing = [];
-        if (file_exists($config_path)) {
-            $existing = json_decode(file_get_contents($config_path), true) ?? [];
-        }
-        
-        $merged = array_merge($existing, $input);
-        
-        if (file_put_contents($config_path, json_encode($merged, JSON_PRETTY_PRINT))) {
-            echo json_encode(['success' => true]);
-        } else {
-            http_response_code(500);
-            echo json_encode(['error' => 'Failed to save config']);
-        }
         break;
         
     default:
