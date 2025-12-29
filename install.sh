@@ -56,25 +56,45 @@ check_dependencies() {
 test_icecast() {
     log_info "Testing BirdNET-Pi Icecast stream..."
     
-    # Icecast typically runs on port 8000
-    # Use --max-time to prevent hanging on continuous stream
-    if curl -s --connect-timeout 5 --max-time 3 http://localhost:8000/stream -o /dev/null 2>/dev/null; then
-        log_info "Icecast stream is available on port 8000"
+    # Try multiple possible URLs for the Icecast stream
+    local urls=(
+        "http://127.0.0.1/stream"
+        "http://localhost/stream"
+        "http://127.0.0.1:8000/stream"
+        "http://localhost:8000/stream"
+    )
+    
+    for url in "${urls[@]}"; do
+        # Check if we get HTTP 200 and some data (stream never ends, so we limit bytes)
+        local response
+        response=$(curl -s --connect-timeout 3 --max-time 2 -w "%{http_code}" "$url" 2>/dev/null | tail -c 3)
+        if [[ "$response" == "200" ]]; then
+            log_info "Icecast stream found at: $url"
+            ICECAST_URL="$url"
+            return 0
+        fi
+    done
+    
+    # Fallback: test with ffmpeg which handles streams better
+    if timeout 5 ffmpeg -hide_banner -i http://127.0.0.1/stream -t 1 -f null - 2>&1 | grep -q "Audio"; then
+        log_info "Icecast stream found at: http://127.0.0.1/stream"
+        ICECAST_URL="http://127.0.0.1/stream"
         return 0
-    else
-        log_warn "Icecast stream not available at http://localhost:8000/stream"
-        log_warn "Make sure BirdNET-Pi is running and Icecast is enabled"
-        return 1
     fi
+    
+    log_warn "Icecast stream not found"
+    log_warn "Make sure BirdNET-Pi is running and Icecast is enabled"
+    return 1
 }
 
 # Test audio capture
 test_audio() {
     log_info "Testing audio capture from Icecast..."
     
+    local url="${ICECAST_URL:-http://127.0.0.1/stream}"
     local output
-    # Use timeout command as extra protection
-    if output=$(timeout 10 ffmpeg -hide_banner -i http://localhost:8000/stream -t 2 -af volumedetect -f null - 2>&1); then
+    
+    if output=$(timeout 10 ffmpeg -hide_banner -i "$url" -t 2 -af volumedetect -f null - 2>&1); then
         if echo "$output" | grep -q "mean_volume"; then
             local mean_db=$(echo "$output" | grep "mean_volume" | sed 's/.*mean_volume: \([-0-9.]*\).*/\1/')
             log_info "Audio capture working! Mean volume: ${mean_db} dB"
@@ -163,12 +183,14 @@ setup_services() {
     # Update web port
     sed -i "s/0.0.0.0:8080/0.0.0.0:$web_port/" "$INSTALL_DIR/systemd/noisy-web.service"
     
-    # Update config with port
+    # Update config with port and detected Icecast URL
+    local icecast="${ICECAST_URL:-http://127.0.0.1/stream}"
     if command -v jq &>/dev/null; then
-        jq ".web_port = $web_port" "$CONFIG_DIR/noisy.json" > "$CONFIG_DIR/noisy.json.tmp"
+        jq ".web_port = $web_port | .icecast_url = \"$icecast\"" "$CONFIG_DIR/noisy.json" > "$CONFIG_DIR/noisy.json.tmp"
         mv "$CONFIG_DIR/noisy.json.tmp" "$CONFIG_DIR/noisy.json"
     else
         sed -i "s/\"web_port\": [0-9]*/\"web_port\": $web_port/" "$CONFIG_DIR/noisy.json"
+        sed -i "s|\"icecast_url\": \"[^\"]*\"|\"icecast_url\": \"$icecast\"|" "$CONFIG_DIR/noisy.json"
     fi
     
     # Copy service files
