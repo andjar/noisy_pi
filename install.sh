@@ -303,6 +303,16 @@ install_services() {
     # Reload systemd
     sudo systemctl daemon-reload
     
+    # Ensure directories exist with correct ownership before starting
+    log "Ensuring directory permissions..."
+    sudo mkdir -p "$DATA_DIR" "$LOG_DIR"
+    sudo chown -R $CURRENT_USER:$CURRENT_USER "$DATA_DIR"
+    sudo chown -R $CURRENT_USER:$CURRENT_USER "$LOG_DIR"
+    sudo chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR/config"
+    
+    # Clear any old log files that might have wrong permissions
+    sudo rm -f "$LOG_DIR/capture.log" 2>/dev/null || true
+    
     # Enable services
     log "Enabling services..."
     sudo systemctl enable noisy-capture noisy-web
