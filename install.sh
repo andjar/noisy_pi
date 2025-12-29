@@ -149,6 +149,9 @@ setup_files() {
     chown -R "$USER:$USER" "$INSTALL_DIR"
     chown -R "$USER:$USER" "$CONFIG_DIR"
     
+    # Make config writable by web server (for settings from dashboard)
+    chmod 666 "$CONFIG_DIR/noisy.json"
+    
     # Make scripts executable
     chmod +x "$INSTALL_DIR/capture/capture_daemon.py"
 }

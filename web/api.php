@@ -390,12 +390,29 @@ switch ($action) {
         
         if (!file_exists($config_path)) {
             http_response_code(404);
-            echo json_encode(['error' => 'Config not found']);
+            echo json_encode(['error' => 'Config not found', 'path' => $config_path]);
+            exit;
+        }
+        
+        if (!is_writable($config_path)) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Config file not writable', 'path' => $config_path, 'hint' => 'Run: sudo chmod 666 ' . $config_path]);
             exit;
         }
         
         $input = json_decode(file_get_contents('php://input'), true);
+        if ($input === null) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid JSON input']);
+            exit;
+        }
+        
         $config = json_decode(file_get_contents($config_path), true);
+        if ($config === null) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to parse config file']);
+            exit;
+        }
         
         // Only allow updating specific fields
         $allowed = ['anomaly_threshold', 'snippet_enabled', 'snippet_duration', 'refresh_interval'];
@@ -409,7 +426,7 @@ switch ($action) {
         
         if ($result === false) {
             http_response_code(500);
-            echo json_encode(['error' => 'Failed to save config']);
+            echo json_encode(['error' => 'Failed to write config', 'path' => $config_path]);
             exit;
         }
         
