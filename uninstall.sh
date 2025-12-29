@@ -1,7 +1,5 @@
 #!/bin/bash
-#
-# Noisy Pi Uninstall Script
-#
+# Noisy Pi Uninstallation Script
 
 set -e
 
@@ -10,46 +8,55 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log() { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
-warn() { echo -e "${YELLOW}[$(date '+%H:%M:%S')]${NC} $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 
 echo ""
-echo -e "${RED}╔═══════════════════════════════════════════╗${NC}"
-echo -e "${RED}║     Noisy Pi Uninstall Script             ║${NC}"
-echo -e "${RED}╚═══════════════════════════════════════════╝${NC}"
+echo "=========================================="
+echo "       Noisy Pi Uninstaller"
+echo "=========================================="
 echo ""
 
-read -p "Are you sure you want to uninstall Noisy Pi? [y/N] " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Cancelled."
-    exit 0
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+    echo -e "${RED}This script must be run with sudo${NC}"
+    exit 1
 fi
 
-log "Stopping services..."
-sudo systemctl stop noisy-capture noisy-web 2>/dev/null || true
-sudo systemctl disable noisy-capture noisy-web 2>/dev/null || true
+# Stop services
+log_info "Stopping services..."
+systemctl stop noisy-capture 2>/dev/null || true
+systemctl stop noisy-web 2>/dev/null || true
 
-log "Removing service files..."
-sudo rm -f /etc/systemd/system/noisy-capture.service
-sudo rm -f /etc/systemd/system/noisy-web.service
-sudo systemctl daemon-reload
+# Disable services
+log_info "Disabling services..."
+systemctl disable noisy-capture 2>/dev/null || true
+systemctl disable noisy-web 2>/dev/null || true
 
-log "Removing installation directory..."
-sudo rm -rf /opt/noisy-pi
+# Remove service files
+log_info "Removing service files..."
+rm -f /etc/systemd/system/noisy-capture.service
+rm -f /etc/systemd/system/noisy-web.service
+systemctl daemon-reload
 
-read -p "Remove database and logs? This will delete ALL collected data! [y/N] " -n 1 -r
+# Ask about data
+echo ""
+read -p "Remove data directory (/var/lib/noisy-pi)? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    log "Removing data and logs..."
-    sudo rm -rf /var/lib/noisy-pi /var/log/noisy-pi
-    log "All data removed."
-else
-    warn "Data preserved at /var/lib/noisy-pi"
-    warn "Logs preserved at /var/log/noisy-pi"
+    log_info "Removing data directory..."
+    rm -rf /var/lib/noisy-pi
 fi
 
-log "Uninstallation complete!"
+# Remove logs
+log_info "Removing log directory..."
+rm -rf /var/log/noisy-pi
+
+# Remove installation directory
+log_info "Removing installation directory..."
+rm -rf /opt/noisy-pi
+
 echo ""
-echo "Thank you for using Noisy Pi!"
+echo -e "${GREEN}Noisy Pi has been uninstalled.${NC}"
+echo ""
 

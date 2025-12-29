@@ -1,436 +1,257 @@
 #!/bin/bash
-#
 # Noisy Pi Installation Script
-# Ambient noise monitoring for Raspberry Pi
-#
-# Usage:
-#   curl -s https://raw.githubusercontent.com/andjar/noisy_pi/main/install.sh | bash
-#
-# Or clone and run:
-#   git clone https://github.com/andjar/noisy_pi.git
-#   cd noisy-pi && ./install.sh
-#
+# Installs ambient noise monitoring alongside BirdNET-Pi
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Configuration
-INSTALL_DIR="/opt/noisy-pi"
-DATA_DIR="/var/lib/noisy-pi"
-LOG_DIR="/var/log/noisy-pi"
-WEB_PORT="${NOISY_PI_PORT:-8080}"
-REPO_URL="https://github.com/andjar/noisy_pi.git"
-
-# Logging
-log() {
-    echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"
-}
-
-warn() {
-    echo -e "${YELLOW}[$(date '+%H:%M:%S')] WARNING:${NC} $1"
-}
-
-error() {
-    echo -e "${RED}[$(date '+%H:%M:%S')] ERROR:${NC} $1" >&2
-    exit 1
-}
-
-header() {
-    echo ""
-    echo -e "${BLUE}========================================${NC}"
-    echo -e "${BLUE} $1${NC}"
-    echo -e "${BLUE}========================================${NC}"
-    echo ""
-}
-
-# Check if running as root
-check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        error "This script should NOT be run as root. Run as your normal user (e.g., 'pi')."
-    fi
-}
-
-# Check system requirements
-check_requirements() {
-    header "Checking System Requirements"
-    
-    # Check OS
-    if [[ -f /etc/os-release ]]; then
-        . /etc/os-release
-        log "Detected OS: $PRETTY_NAME"
-        
-        if [[ "$ID" != "debian" && "$ID" != "raspbian" ]]; then
-            warn "This script is designed for Debian/Raspbian. Proceed with caution."
-        fi
-    else
-        warn "Could not detect OS version."
-    fi
-    
-    # Check architecture
-    ARCH=$(uname -m)
-    log "Architecture: $ARCH"
-    
-    # Check for Raspberry Pi
-    if [[ -f /proc/device-tree/model ]]; then
-        PI_MODEL=$(cat /proc/device-tree/model)
-        log "Hardware: $PI_MODEL"
-    fi
-    
-    # Check disk space (need at least 500MB free)
-    FREE_SPACE=$(df -m / | awk 'NR==2 {print $4}')
-    if [[ $FREE_SPACE -lt 500 ]]; then
-        error "Insufficient disk space. Need at least 500MB free, have ${FREE_SPACE}MB."
-    fi
-    log "Free disk space: ${FREE_SPACE}MB"
-    
-    # Check for PulseAudio
-    if command -v pulseaudio &> /dev/null; then
-        log "PulseAudio: Found"
-        if pulseaudio --check 2>/dev/null; then
-            log "PulseAudio: Running"
-        else
-            warn "PulseAudio is installed but not running. Will attempt to start it."
-        fi
-    else
-        warn "PulseAudio not found. Audio capture may not work."
-    fi
-    
-    # Check for Python 3
-    if command -v python3 &> /dev/null; then
-        PYTHON_VERSION=$(python3 --version)
-        log "Python: $PYTHON_VERSION"
-    else
-        error "Python 3 is required but not found."
-    fi
-    
-    # Check for PHP
-    if command -v php &> /dev/null; then
-        PHP_VERSION=$(php --version | head -n1)
-        log "PHP: $PHP_VERSION"
-    else
-        warn "PHP not found. Will install."
-    fi
-    
-    # Check if port is available, try alternatives if not
-    if ss -tuln | grep -q ":${WEB_PORT} "; then
-        warn "Port ${WEB_PORT} is already in use."
-        # Try alternative ports
-        for ALT_PORT in 8081 8082 8083 8084 8085; do
-            if ! ss -tuln | grep -q ":${ALT_PORT} "; then
-                log "Using alternative port: ${ALT_PORT}"
-                WEB_PORT=$ALT_PORT
-                break
-            fi
-        done
-        if ss -tuln | grep -q ":${WEB_PORT} "; then
-            warn "No free port found in 8080-8085. You can set NOISY_PI_PORT=XXXX before running install."
-        fi
-    else
-        log "Port ${WEB_PORT}: Available"
-    fi
-    
-    log "Requirements check passed!"
-}
-
-# Install system dependencies
-install_dependencies() {
-    header "Installing Dependencies"
-    
-    log "Updating package lists..."
-    sudo apt-get update -qq
-    
-    log "Installing required packages..."
-    sudo apt-get install -y -qq \
-        python3-full \
-        python3-venv \
-        python3-numpy \
-        python3-scipy \
-        php-cli \
-        php-sqlite3 \
-        sqlite3 \
-        libportaudio2 \
-        portaudio19-dev \
-        libsndfile1 \
-        git
-    
-    log "Dependencies installed!"
-}
-
-# Create Python virtual environment
-setup_venv() {
-    header "Setting Up Python Environment"
-    
-    VENV_DIR="$INSTALL_DIR/venv"
-    
-    log "Creating virtual environment at $VENV_DIR..."
-    python3 -m venv "$VENV_DIR" --system-site-packages
-    
-    log "Installing Python packages in venv..."
-    "$VENV_DIR/bin/pip" install --quiet sounddevice soundfile
-    
-    log "Python environment ready!"
-}
-
-# Download or copy source files
-setup_files() {
-    header "Setting Up Files"
-    
-    # Check if we're running from a cloned repo
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    
-    if [[ -f "${SCRIPT_DIR}/capture/capture_daemon.py" ]]; then
-        log "Installing from local directory..."
-        SOURCE_DIR="$SCRIPT_DIR"
-    else
-        log "Cloning repository..."
-        TEMP_DIR=$(mktemp -d)
-        git clone --depth 1 "$REPO_URL" "$TEMP_DIR"
-        SOURCE_DIR="$TEMP_DIR"
-    fi
-    
-    # Create directories
-    log "Creating directories..."
-    sudo mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$LOG_DIR"
-    
-    # Copy files
-    log "Copying files to $INSTALL_DIR..."
-    sudo cp -r "${SOURCE_DIR}/capture" "$INSTALL_DIR/"
-    sudo cp -r "${SOURCE_DIR}/web" "$INSTALL_DIR/"
-    sudo cp -r "${SOURCE_DIR}/systemd" "$INSTALL_DIR/"
-    sudo cp -r "${SOURCE_DIR}/config" "$INSTALL_DIR/"
-    
-    # Set ownership
-    sudo chown -R $USER:$USER "$INSTALL_DIR"
-    sudo chown -R $USER:$USER "$DATA_DIR"
-    sudo chown -R $USER:$USER "$LOG_DIR"
-    
-    # Make capture daemon executable
-    chmod +x "$INSTALL_DIR/capture/capture_daemon.py"
-    
-    # Clean up temp directory if used
-    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-        rm -rf "$TEMP_DIR"
-    fi
-    
-    log "Files installed!"
-}
-
-# Initialize database
-init_database() {
-    header "Initializing Database"
-    
-    cd "$INSTALL_DIR/capture"
-    
-    # Set environment for Python
-    export NOISY_PI_DIR="$INSTALL_DIR"
-    export NOISY_PI_DATA="$DATA_DIR"
-    export NOISY_PI_LOG="$LOG_DIR"
-    
-    log "Creating database schema..."
-    "$INSTALL_DIR/venv/bin/python3" db.py --init
-    
-    log "Database initialized at ${DATA_DIR}/noisy.db"
-}
-
-# Test audio capture
-test_audio() {
-    header "Checking Audio Setup"
-    
-    cd "$INSTALL_DIR/capture"
-    
-    # Check if BirdNET stream directory exists
-    CURRENT_USER=$(whoami)
-    BIRDNET_DIR="/home/${CURRENT_USER}/BirdSongs/StreamData"
-    
-    if [[ -d "${BIRDNET_DIR}" ]]; then
-        WAV_COUNT=$(find "${BIRDNET_DIR}" -name "*.wav" -type f 2>/dev/null | wc -l)
-        log "BirdNET StreamData found with ${WAV_COUNT} WAV files"
-        log "Noisy Pi will analyze these files (file-watch mode)"
-    else
-        log "BirdNET StreamData not found. Showing available audio devices for direct capture mode:"
-        "$INSTALL_DIR/venv/bin/python3" capture_daemon.py --list-devices || true
-        warn "File-watch mode requires BirdNET-Pi to be installed and recording."
-        warn "You can also switch to direct capture mode in the config."
-    fi
-    
-    log ""
-    log "Mode can be changed in: $INSTALL_DIR/config/noisy.json"
-    log "  file_watch_mode: true  = Analyze BirdNET-Pi recordings (recommended)"
-    log "  file_watch_mode: false = Direct audio capture (may conflict with BirdNET)"
-}
-
-# Install systemd services
-install_services() {
-    header "Installing Services"
-    
-    # Update user in service files
-    CURRENT_USER=$(whoami)
-    CURRENT_UID=$(id -u)
-    
-    log "Configuring services for user: $CURRENT_USER (UID: $CURRENT_UID)"
-    log "Web dashboard will run on port: $WEB_PORT"
-    
-    # Update config with selected port and BirdNET directory
-    sed -i "s/\"web_port\": 8080/\"web_port\": $WEB_PORT/" "$INSTALL_DIR/config/noisy.json"
-    
-    # Update BirdNET stream directory to actual user's home
-    BIRDNET_DIR="/home/${CURRENT_USER}/BirdSongs/StreamData"
-    sed -i "s|/home/ubuntu/BirdSongs/StreamData|${BIRDNET_DIR}|" "$INSTALL_DIR/config/noisy.json"
-    
-    if [[ -d "${BIRDNET_DIR}" ]]; then
-        log "BirdNET StreamData found at: ${BIRDNET_DIR}"
-    else
-        warn "BirdNET StreamData not found at: ${BIRDNET_DIR}"
-        warn "If BirdNET-Pi is installed, update birdnet_stream_dir in config."
-    fi
-    
-    # Create service files with correct user and port
-    sudo sed "s/User=pi/User=$CURRENT_USER/g; s/Group=pi/Group=$CURRENT_USER/g; s|/run/user/1000|/run/user/$CURRENT_UID|g" \
-        "$INSTALL_DIR/systemd/noisy-capture.service" > /tmp/noisy-capture.service
-    sudo sed "s/User=pi/User=$CURRENT_USER/g; s/Group=pi/Group=$CURRENT_USER/g; s/:8080/:$WEB_PORT/g" \
-        "$INSTALL_DIR/systemd/noisy-web.service" > /tmp/noisy-web.service
-    
-    # Install service files
-    sudo mv /tmp/noisy-capture.service /etc/systemd/system/
-    sudo mv /tmp/noisy-web.service /etc/systemd/system/
-    
-    # Reload systemd
-    sudo systemctl daemon-reload
-    
-    # Ensure directories exist with correct ownership before starting
-    log "Ensuring directory permissions..."
-    sudo mkdir -p "$DATA_DIR" "$LOG_DIR"
-    sudo chown -R $CURRENT_USER:$CURRENT_USER "$DATA_DIR"
-    sudo chown -R $CURRENT_USER:$CURRENT_USER "$LOG_DIR"
-    sudo chown -R $CURRENT_USER:$CURRENT_USER "$INSTALL_DIR/config"
-    
-    # Clear any old log files that might have wrong permissions
-    sudo rm -f "$LOG_DIR/capture.log" 2>/dev/null || true
-    
-    # Enable services
-    log "Enabling services..."
-    sudo systemctl enable noisy-capture noisy-web
-    
-    # Start services
-    log "Starting services..."
-    sudo systemctl start noisy-capture noisy-web
-    
-    # Check status
-    sleep 2
-    if systemctl is-active --quiet noisy-capture; then
-        log "Capture daemon: Running"
-    else
-        warn "Capture daemon: Not running. Check logs with: journalctl -u noisy-capture"
-    fi
-    
-    if systemctl is-active --quiet noisy-web; then
-        log "Web dashboard: Running"
-    else
-        warn "Web dashboard: Not running. Check logs with: journalctl -u noisy-web"
-    fi
-    
-    log "Services installed!"
-}
-
-# Create uninstall script
-create_uninstall() {
-    cat > "$INSTALL_DIR/uninstall.sh" << 'EOF'
-#!/bin/bash
-# Noisy Pi Uninstall Script
-
+# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log() { echo -e "${GREEN}[$(date '+%H:%M:%S')]${NC} $1"; }
-warn() { echo -e "${YELLOW}[$(date '+%H:%M:%S')]${NC} $1"; }
+log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-log "Stopping services..."
-sudo systemctl stop noisy-capture noisy-web 2>/dev/null || true
-sudo systemctl disable noisy-capture noisy-web 2>/dev/null || true
+# Configuration
+REPO_URL="https://github.com/andjar/noisy_pi"
+INSTALL_DIR="/opt/noisy-pi"
+DATA_DIR="/var/lib/noisy-pi"
+LOG_DIR="/var/log/noisy-pi"
+CONFIG_DIR="$INSTALL_DIR/config"
+USER="${SUDO_USER:-$USER}"
 
-log "Removing service files..."
-sudo rm -f /etc/systemd/system/noisy-capture.service
-sudo rm -f /etc/systemd/system/noisy-web.service
-sudo systemctl daemon-reload
-
-log "Removing installation directory..."
-sudo rm -rf /opt/noisy-pi
-
-read -p "Remove database and logs? This will delete all collected data! [y/N] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    log "Removing data and logs..."
-    sudo rm -rf /var/lib/noisy-pi /var/log/noisy-pi
-else
-    warn "Data preserved at /var/lib/noisy-pi"
-fi
-
-log "Uninstallation complete!"
-EOF
-    chmod +x "$INSTALL_DIR/uninstall.sh"
-}
-
-# Print completion message
-print_complete() {
-    header "Installation Complete!"
-    
-    # Get hostname/IP
-    HOSTNAME=$(hostname)
-    IP_ADDR=$(hostname -I | awk '{print $1}')
-    
-    echo -e "${GREEN}Noisy Pi is now running!${NC}"
-    echo ""
-    echo "Access the dashboard at:"
-    echo -e "  ${BLUE}http://${HOSTNAME}.local:${WEB_PORT}${NC}"
-    if [[ -n "$IP_ADDR" ]]; then
-        echo -e "  ${BLUE}http://${IP_ADDR}:${WEB_PORT}${NC}"
+# Check if running as root or with sudo
+check_sudo() {
+    if [[ $EUID -ne 0 ]]; then
+        log_error "This script must be run with sudo"
+        exit 1
     fi
-    echo ""
-    echo "Useful commands:"
-    echo "  View capture logs:    journalctl -u noisy-capture -f"
-    echo "  View web logs:        journalctl -u noisy-web -f"
-    echo "  Restart capture:      sudo systemctl restart noisy-capture"
-    echo "  Restart web:          sudo systemctl restart noisy-web"
-    echo "  Stop all:             sudo systemctl stop noisy-capture noisy-web"
-    echo "  Uninstall:            $INSTALL_DIR/uninstall.sh"
-    echo ""
-    echo "Data is stored at: $DATA_DIR"
-    echo "Logs are stored at: $LOG_DIR"
-    echo ""
-    echo -e "${GREEN}Thank you for using Noisy Pi!${NC}"
 }
 
-# Main installation
+# Check dependencies
+check_dependencies() {
+    log_info "Checking dependencies..."
+    
+    local missing=()
+    
+    # Required commands
+    for cmd in ffmpeg php sqlite3 python3 git curl; do
+        if ! command -v $cmd &>/dev/null; then
+            missing+=($cmd)
+        fi
+    done
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        log_info "Installing missing dependencies: ${missing[*]}"
+        apt-get update
+        apt-get install -y "${missing[@]}"
+    fi
+    
+    log_info "All dependencies satisfied"
+}
+
+# Test Icecast stream
+test_icecast() {
+    log_info "Testing BirdNET-Pi Icecast stream..."
+    
+    if curl -s --connect-timeout 5 http://localhost/stream -o /dev/null; then
+        log_info "Icecast stream is available"
+        return 0
+    else
+        log_warn "Icecast stream not available at http://localhost/stream"
+        log_warn "Make sure BirdNET-Pi is running and Icecast is enabled"
+        return 1
+    fi
+}
+
+# Test audio capture
+test_audio() {
+    log_info "Testing audio capture from Icecast..."
+    
+    local output
+    if output=$(ffmpeg -hide_banner -i http://localhost/stream -t 2 -af volumedetect -f null - 2>&1); then
+        if echo "$output" | grep -q "mean_volume"; then
+            local mean_db=$(echo "$output" | grep "mean_volume" | sed 's/.*mean_volume: \([-0-9.]*\).*/\1/')
+            log_info "Audio capture working! Mean volume: ${mean_db} dB"
+            return 0
+        fi
+    fi
+    
+    log_warn "Could not capture audio from Icecast stream"
+    return 1
+}
+
+# Create directories
+setup_directories() {
+    log_info "Creating directories..."
+    
+    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$DATA_DIR"
+    mkdir -p "$DATA_DIR/snippets"
+    mkdir -p "$LOG_DIR"
+    mkdir -p "$CONFIG_DIR"
+    
+    # Set ownership
+    chown -R "$USER:$USER" "$DATA_DIR"
+    chown -R "$USER:$USER" "$LOG_DIR"
+}
+
+# Download/copy files
+setup_files() {
+    log_info "Setting up files..."
+    
+    # If running from cloned repo
+    if [[ -f "$(dirname "$0")/capture/capture_daemon.py" ]]; then
+        log_info "Installing from local directory..."
+        cp -r "$(dirname "$0")"/* "$INSTALL_DIR/"
+    else
+        log_info "Cloning from GitHub..."
+        if [[ -d "$INSTALL_DIR/.git" ]]; then
+            cd "$INSTALL_DIR"
+            git pull
+        else
+            rm -rf "$INSTALL_DIR"
+            git clone "$REPO_URL" "$INSTALL_DIR"
+        fi
+    fi
+    
+    # Ensure config exists
+    if [[ ! -f "$CONFIG_DIR/noisy.json" ]]; then
+        cp "$INSTALL_DIR/config/noisy.json" "$CONFIG_DIR/noisy.json"
+    fi
+    
+    # Set ownership
+    chown -R "$USER:$USER" "$INSTALL_DIR"
+    chown -R "$USER:$USER" "$CONFIG_DIR"
+    
+    # Make scripts executable
+    chmod +x "$INSTALL_DIR/capture/capture_daemon.py"
+}
+
+# Find available port
+find_available_port() {
+    local port=8080
+    while [[ $port -le 8085 ]]; do
+        if ! ss -tlnp | grep -q ":$port "; then
+            echo $port
+            return 0
+        fi
+        ((port++))
+    done
+    echo 8080
+}
+
+# Setup systemd services
+setup_services() {
+    log_info "Setting up systemd services..."
+    
+    # Find available port for web server
+    local web_port=$(find_available_port)
+    log_info "Using port $web_port for web dashboard"
+    
+    # Update service files with correct user
+    sed -i "s/User=ubuntu/User=$USER/" "$INSTALL_DIR/systemd/noisy-capture.service"
+    sed -i "s/Group=ubuntu/Group=$USER/" "$INSTALL_DIR/systemd/noisy-capture.service"
+    sed -i "s/User=ubuntu/User=$USER/" "$INSTALL_DIR/systemd/noisy-web.service"
+    sed -i "s/Group=ubuntu/Group=$USER/" "$INSTALL_DIR/systemd/noisy-web.service"
+    
+    # Update web port
+    sed -i "s/0.0.0.0:8080/0.0.0.0:$web_port/" "$INSTALL_DIR/systemd/noisy-web.service"
+    
+    # Update config with port
+    if command -v jq &>/dev/null; then
+        jq ".web_port = $web_port" "$CONFIG_DIR/noisy.json" > "$CONFIG_DIR/noisy.json.tmp"
+        mv "$CONFIG_DIR/noisy.json.tmp" "$CONFIG_DIR/noisy.json"
+    else
+        sed -i "s/\"web_port\": [0-9]*/\"web_port\": $web_port/" "$CONFIG_DIR/noisy.json"
+    fi
+    
+    # Copy service files
+    cp "$INSTALL_DIR/systemd/noisy-capture.service" /etc/systemd/system/
+    cp "$INSTALL_DIR/systemd/noisy-web.service" /etc/systemd/system/
+    
+    # Reload and enable
+    systemctl daemon-reload
+    systemctl enable noisy-capture
+    systemctl enable noisy-web
+    
+    log_info "Services configured on port $web_port"
+}
+
+# Start services
+start_services() {
+    log_info "Starting services..."
+    
+    systemctl start noisy-capture
+    sleep 2
+    systemctl start noisy-web
+    
+    # Check status
+    if systemctl is-active --quiet noisy-capture; then
+        log_info "Capture daemon started successfully"
+    else
+        log_error "Capture daemon failed to start"
+        journalctl -u noisy-capture -n 20 --no-pager
+    fi
+    
+    if systemctl is-active --quiet noisy-web; then
+        log_info "Web dashboard started successfully"
+    else
+        log_error "Web dashboard failed to start"
+        journalctl -u noisy-web -n 20 --no-pager
+    fi
+}
+
+# Print summary
+print_summary() {
+    local web_port=$(grep -oP '"web_port":\s*\K[0-9]+' "$CONFIG_DIR/noisy.json" 2>/dev/null || echo "8080")
+    local hostname=$(hostname)
+    
+    echo ""
+    echo "=========================================="
+    echo -e "${GREEN}Noisy Pi Installation Complete!${NC}"
+    echo "=========================================="
+    echo ""
+    echo "Dashboard: http://${hostname}.local:${web_port}"
+    echo "           http://$(hostname -I | awk '{print $1}'):${web_port}"
+    echo ""
+    echo "Commands:"
+    echo "  sudo systemctl status noisy-capture  # Check capture daemon"
+    echo "  sudo systemctl status noisy-web      # Check web server"
+    echo "  tail -f $LOG_DIR/capture.log         # Watch logs"
+    echo "  sqlite3 $DATA_DIR/noisy.db           # Query database"
+    echo ""
+    echo "Config file: $CONFIG_DIR/noisy.json"
+    echo ""
+}
+
+# Main
 main() {
     echo ""
-    echo -e "${BLUE}╔═══════════════════════════════════════════╗${NC}"
-    echo -e "${BLUE}║                                           ║${NC}"
-    echo -e "${BLUE}║     📊 Noisy Pi Installation Script       ║${NC}"
-    echo -e "${BLUE}║     Ambient Noise Monitoring for Pi       ║${NC}"
-    echo -e "${BLUE}║                                           ║${NC}"
-    echo -e "${BLUE}╚═══════════════════════════════════════════╝${NC}"
+    echo "=========================================="
+    echo "       Noisy Pi Installer"
+    echo "=========================================="
     echo ""
     
-    check_root
-    check_requirements
-    install_dependencies
+    check_sudo
+    check_dependencies
+    
+    if ! test_icecast; then
+        log_error "BirdNET-Pi Icecast stream is required"
+        log_error "Please ensure BirdNET-Pi is running with Icecast enabled"
+        exit 1
+    fi
+    
+    test_audio || true  # Continue even if this fails
+    
+    setup_directories
     setup_files
-    setup_venv
-    init_database
-    test_audio
-    install_services
-    create_uninstall
-    print_complete
+    setup_services
+    start_services
+    print_summary
 }
 
-# Run main
 main "$@"
 

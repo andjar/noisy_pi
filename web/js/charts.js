@@ -12,10 +12,12 @@ class ChartManager {
             success: '#3fb950',
             warning: '#d29922',
             danger: '#f85149',
-            laeq: '#58a6ff',
-            lmax: '#f85149',
-            lmin: '#3fb950',
-            l50: '#d29922'
+            mean: '#58a6ff',
+            max: '#f85149',
+            min: '#3fb950',
+            bandLow: '#f85149',
+            bandMid: '#d29922',
+            bandHigh: '#3fb950'
         };
         
         this.setupChartDefaults();
@@ -24,7 +26,7 @@ class ChartManager {
     setupChartDefaults() {
         Chart.defaults.color = '#8b949e';
         Chart.defaults.borderColor = '#30363d';
-        Chart.defaults.font.family = "'Inter', -apple-system, sans-serif";
+        Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
         Chart.defaults.plugins.legend.labels.boxWidth = 12;
         Chart.defaults.plugins.legend.labels.padding = 15;
     }
@@ -33,14 +35,16 @@ class ChartManager {
      * Create or update levels chart
      */
     updateLevelsChart(data) {
-        const ctx = document.getElementById('levelsChart');
+        const ctx = document.getElementById('levels-chart');
         if (!ctx) return;
         
         if (this.charts.levels) {
             this.charts.levels.destroy();
         }
         
-        const labels = data.map(d => new Date(d.timestamp * 1000));
+        // Data comes in reverse chronological, so reverse it
+        const chronological = [...data].reverse();
+        const labels = chronological.map(d => new Date(d.timestamp));
         
         this.charts.levels = new Chart(ctx, {
             type: 'line',
@@ -48,41 +52,22 @@ class ChartManager {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'LAeq',
-                        data: data.map(d => d.laeq),
-                        borderColor: this.chartColors.laeq,
-                        backgroundColor: this.chartColors.laeq + '20',
+                        label: 'Mean dB',
+                        data: chronological.map(d => d.mean_db),
+                        borderColor: this.chartColors.mean,
+                        backgroundColor: this.chartColors.mean + '20',
                         fill: true,
                         tension: 0.3,
                         pointRadius: 0,
                         borderWidth: 2
                     },
                     {
-                        label: 'Lmax',
-                        data: data.map(d => d.lmax),
-                        borderColor: this.chartColors.lmax,
+                        label: 'Max dB',
+                        data: chronological.map(d => d.max_db),
+                        borderColor: this.chartColors.max,
                         backgroundColor: 'transparent',
                         borderWidth: 1,
                         borderDash: [5, 5],
-                        pointRadius: 0,
-                        tension: 0.3
-                    },
-                    {
-                        label: 'L50 (Median)',
-                        data: data.map(d => d.l50),
-                        borderColor: this.chartColors.l50,
-                        backgroundColor: 'transparent',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        tension: 0.3
-                    },
-                    {
-                        label: 'L90 (Background)',
-                        data: data.map(d => d.l90),
-                        borderColor: this.chartColors.lmin,
-                        backgroundColor: 'transparent',
-                        borderWidth: 1,
-                        borderDash: [2, 2],
                         pointRadius: 0,
                         tension: 0.3
                     }
@@ -101,6 +86,7 @@ class ChartManager {
                         time: {
                             displayFormats: {
                                 hour: 'HH:mm',
+                                minute: 'HH:mm',
                                 day: 'MMM d'
                             }
                         },
@@ -141,34 +127,138 @@ class ChartManager {
     }
     
     /**
-     * Create or update spectral centroid chart
+     * Create or update frequency bands chart
      */
-    updateCentroidChart(data) {
-        const ctx = document.getElementById('centroidChart');
+    updateBandsChart(data) {
+        const ctx = document.getElementById('bands-chart');
         if (!ctx) return;
         
-        if (this.charts.centroid) {
-            this.charts.centroid.destroy();
+        if (this.charts.bands) {
+            this.charts.bands.destroy();
         }
         
-        const labels = data.map(d => new Date(d.timestamp * 1000));
+        const chronological = [...data].reverse();
+        const labels = chronological.map(d => new Date(d.timestamp));
         
-        this.charts.centroid = new Chart(ctx, {
+        this.charts.bands = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Spectral Centroid',
-                        data: data.map(d => d.spectral_centroid),
-                        borderColor: '#a371f7',
-                        backgroundColor: '#a371f720',
-                        fill: true,
-                        tension: 0.3,
+                        label: 'Low (0-200 Hz)',
+                        data: chronological.map(d => d.band_low_db),
+                        borderColor: this.chartColors.bandLow,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
                         pointRadius: 0,
-                        borderWidth: 2
+                        tension: 0.3
+                    },
+                    {
+                        label: 'Mid (200-2000 Hz)',
+                        data: chronological.map(d => d.band_mid_db),
+                        borderColor: this.chartColors.bandMid,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.3
+                    },
+                    {
+                        label: 'High (2000+ Hz)',
+                        data: chronological.map(d => d.band_high_db),
+                        borderColor: this.chartColors.bandHigh,
+                        backgroundColor: 'transparent',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.3
                     }
                 ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            displayFormats: {
+                                hour: 'HH:mm',
+                                minute: 'HH:mm'
+                            }
+                        },
+                        grid: {
+                            color: '#21262d'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Level (dB)'
+                        },
+                        grid: {
+                            color: '#21262d'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top'
+                    },
+                    tooltip: {
+                        backgroundColor: '#161b22',
+                        borderColor: '#30363d',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${context.parsed.y?.toFixed(1)} dB`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    /**
+     * Create or update anomaly chart
+     */
+    updateAnomalyChart(data) {
+        const ctx = document.getElementById('anomaly-chart');
+        if (!ctx) return;
+        
+        if (this.charts.anomaly) {
+            this.charts.anomaly.destroy();
+        }
+        
+        const chronological = [...data].reverse();
+        const labels = chronological.map(d => new Date(d.timestamp));
+        
+        // Color points based on anomaly score
+        const pointColors = chronological.map(d => {
+            const score = d.anomaly_score || 0;
+            if (score >= 2.5) return this.chartColors.danger;
+            if (score >= 1.5) return this.chartColors.warning;
+            return this.chartColors.success;
+        });
+        
+        this.charts.anomaly = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Anomaly Score',
+                    data: chronological.map((d, i) => ({
+                        x: labels[i],
+                        y: d.anomaly_score || 0
+                    })),
+                    backgroundColor: pointColors,
+                    borderColor: pointColors,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
             },
             options: {
                 responsive: true,
@@ -188,8 +278,9 @@ class ChartManager {
                     y: {
                         title: {
                             display: true,
-                            text: 'Frequency (Hz)'
+                            text: 'Anomaly Score'
                         },
+                        min: 0,
                         grid: {
                             color: '#21262d'
                         }
@@ -199,17 +290,30 @@ class ChartManager {
                     legend: {
                         display: false
                     },
+                    annotation: {
+                        annotations: {
+                            threshold: {
+                                type: 'line',
+                                yMin: 2.5,
+                                yMax: 2.5,
+                                borderColor: this.chartColors.danger,
+                                borderWidth: 1,
+                                borderDash: [5, 5],
+                                label: {
+                                    display: true,
+                                    content: 'Threshold',
+                                    position: 'end'
+                                }
+                            }
+                        }
+                    },
                     tooltip: {
                         backgroundColor: '#161b22',
                         borderColor: '#30363d',
                         borderWidth: 1,
                         callbacks: {
                             label: function(context) {
-                                const freq = context.parsed.y;
-                                if (freq >= 1000) {
-                                    return `${(freq/1000).toFixed(2)} kHz`;
-                                }
-                                return `${freq?.toFixed(0)} Hz`;
+                                return `Score: ${context.parsed.y?.toFixed(2)}`;
                             }
                         }
                     }
@@ -222,26 +326,21 @@ class ChartManager {
      * Create or update hourly statistics chart
      */
     updateHourlyChart(data) {
-        const ctx = document.getElementById('hourlyChart');
+        const ctx = document.getElementById('hourly-chart');
         if (!ctx) return;
         
         if (this.charts.hourly) {
             this.charts.hourly.destroy();
         }
         
-        const labels = data.map(d => {
-            const date = new Date(d.hour_start * 1000);
-            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        });
-        
         this.charts.hourly = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: labels,
+                labels: data.map(d => d.hour + ':00'),
                 datasets: [
                     {
-                        label: 'Avg LAeq',
-                        data: data.map(d => d.avg_laeq),
+                        label: 'Avg dB',
+                        data: data.map(d => d.avg_db),
                         backgroundColor: this.chartColors.primary + 'aa',
                         borderColor: this.chartColors.primary,
                         borderWidth: 1,

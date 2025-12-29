@@ -7,9 +7,8 @@ import time
 from datetime import datetime
 from typing import Optional, Tuple
 
-from config import ANOMALY_THRESHOLD, BASELINE_MIN_SAMPLES, FFT_BINS
-from db import get_baseline, update_baseline, get_measurements
-from features import quantize_spectrum, dequantize_spectrum
+from . import config
+from . import db
 
 
 class BaselineModel:
@@ -40,8 +39,14 @@ class BaselineModel:
             return self.cache[cache_key]
         
         # Load from database
-        baseline = get_baseline(day_of_week, hour)
-        if baseline and baseline.get('sample_count', 0) >= BASELINE_MIN_SAMPLES:
+        avg, std, samples = db.get_baseline(day_of_week, hour)
+        
+        if samples >= config.get_config_value('baseline_min_samples', 100):
+            baseline = {
+                'mean_db_avg': avg,
+                'mean_db_std': std,
+                'samples': samples
+            }
             self.cache[cache_key] = baseline
             self.last_cache_update = now
             return baseline
@@ -51,8 +56,8 @@ class BaselineModel:
     def compute_anomaly_score(
         self,
         timestamp: int,
-        laeq: float,
-        spectrum: np.ndarray = None
+        mean_db: float,
+        band_levels: dict = None
     ) -> float:
         """
         Compute anomaly score for a measurement.
@@ -61,13 +66,16 @@ class BaselineModel:
         
         Args:
             timestamp: Unix timestamp of the measurement
-            laeq: A-weighted equivalent level
-            spectrum: Optional spectrum for spectral anomaly detection
+            mean_db: Mean dB level
+            band_levels: Optional dict with band_low_db, band_mid_db, band_high_db
         
         Returns:
             Anomaly score (Z-score). Higher = more anomalous.
             Values > 2.0 are typically flagged as anomalies.
         """
+        if mean_db is None:
+            return 0.0
+            
         baseline = self.get_baseline_for_time(timestamp)
         
         if baseline is None:
@@ -75,27 +83,18 @@ class BaselineModel:
             return 0.0
         
         # Level-based anomaly (Z-score)
-        laeq_mean = baseline.get('laeq_mean', 0)
-        laeq_std = baseline.get('laeq_std', 1)
+        avg = baseline.get('mean_db_avg', -40)
+        std = baseline.get('mean_db_std', 10)
         
-        if laeq_std < 0.1:
-            laeq_std = 0.1  # Prevent division by very small values
+        if std < 0.1:
+            std = 0.1  # Prevent division by very small values
         
-        level_zscore = abs(laeq - laeq_mean) / laeq_std
+        level_zscore = abs(mean_db - avg) / std
         
-        # Spectral anomaly (if spectrum provided)
-        spectral_zscore = 0.0
-        if spectrum is not None and baseline.get('spectral_mean') is not None:
-            spectral_mean = np.frombuffer(baseline['spectral_mean'], dtype=np.float32)
-            if len(spectral_mean) == len(spectrum):
-                # Euclidean distance in spectral space, normalized
-                spectral_diff = np.sqrt(np.mean((spectrum - spectral_mean) ** 2))
-                spectral_zscore = spectral_diff / 10.0  # Normalize roughly to Z-score scale
+        # Could add band-based anomaly detection here
+        # For now, just use level
         
-        # Combined score (weighted average)
-        combined_score = 0.7 * level_zscore + 0.3 * spectral_zscore
-        
-        return float(combined_score)
+        return float(round(level_zscore, 2))
 
 
 class BaselineUpdater:
@@ -118,79 +117,14 @@ class BaselineUpdater:
         
         return (now - self.last_update[key]) > self.update_interval
     
-    def update_baseline_for_hour(self, day_of_week: int, hour: int):
-        """
-        Update baseline statistics for a specific day/hour combination.
-        
-        Computes statistics from the last N days of data.
-        """
-        if not self.should_update(day_of_week, hour):
+    def update_current_hour(self, mean_db: float):
+        """Update baseline for the current day/hour with new measurement."""
+        if mean_db is None:
             return
-        
-        now = time.time()
-        lookback_seconds = self.lookback_days * 24 * 3600
-        
-        # Get all measurements for this day/hour in the lookback period
-        # We need to filter by day_of_week and hour after fetching
-        start_time = int(now - lookback_seconds)
-        end_time = int(now)
-        
-        measurements = get_measurements(start_time, end_time, include_spectrogram=True)
-        
-        # Filter to matching day/hour
-        matching = []
-        for m in measurements:
-            dt = datetime.fromtimestamp(m['timestamp'])
-            if dt.weekday() == day_of_week and dt.hour == hour:
-                matching.append(m)
-        
-        if len(matching) < BASELINE_MIN_SAMPLES:
-            return  # Not enough data
-        
-        # Compute statistics
-        laeq_values = [m['laeq'] for m in matching if m['laeq'] is not None]
-        
-        if not laeq_values:
-            return
-        
-        laeq_mean = float(np.mean(laeq_values))
-        laeq_std = float(np.std(laeq_values))
-        
-        # Compute average spectrum
-        spectra = []
-        for m in matching:
-            if m.get('spectrogram'):
-                # Get first snapshot spectrum as representative
-                spectrum = dequantize_spectrum(m['spectrogram'][:FFT_BINS])
-                spectra.append(spectrum)
-        
-        if spectra:
-            spectral_mean = np.mean(spectra, axis=0).astype(np.float32).tobytes()
-        else:
-            spectral_mean = None
-        
-        # Update database
-        update_baseline(
-            day_of_week=day_of_week,
-            hour=hour,
-            laeq_mean=laeq_mean,
-            laeq_std=laeq_std,
-            spectral_mean=spectral_mean,
-            sample_count=len(matching)
-        )
-        
-        self.last_update[(day_of_week, hour)] = now
-    
-    def update_current_hour(self):
-        """Update baseline for the current day/hour."""
+            
         dt = datetime.now()
-        self.update_baseline_for_hour(dt.weekday(), dt.hour)
-    
-    def update_all(self):
-        """Update baselines for all day/hour combinations."""
-        for day in range(7):
-            for hour in range(24):
-                self.update_baseline_for_hour(day, hour)
+        db.update_baseline(dt.weekday(), dt.hour, mean_db)
+        self.last_update[(dt.weekday(), dt.hour)] = time.time()
 
 
 # Global instances
@@ -198,12 +132,12 @@ baseline_model = BaselineModel()
 baseline_updater = BaselineUpdater()
 
 
-def get_anomaly_score(timestamp: int, laeq: float, spectrum: np.ndarray = None) -> float:
+def get_anomaly_score(timestamp: int, mean_db: float, band_levels: dict = None) -> float:
     """Get anomaly score for a measurement."""
-    return baseline_model.compute_anomaly_score(timestamp, laeq, spectrum)
+    return baseline_model.compute_anomaly_score(timestamp, mean_db, band_levels)
 
 
-def trigger_baseline_update():
+def trigger_baseline_update(mean_db: float):
     """Trigger baseline update for current hour."""
-    baseline_updater.update_current_hour()
+    baseline_updater.update_current_hour(mean_db)
 

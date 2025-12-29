@@ -1,40 +1,30 @@
-# Database
+# Data
 *.db
-*.db-journal
 *.db-wal
 *.db-shm
+data/*.db
+logs/*.log
 
-# Logs
-*.log
-logs/*
-!logs/.gitkeep
-
-# Data
-data/*
-!data/.gitkeep
+# Snippets
+data/snippets/
 
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
+*.pyc
+*.pyo
 venv/
 .venv/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Temporary
-*.tmp
-*.temp
+# Local config overrides
+config/noisy.local.json
 

@@ -1,3 +1,0 @@
-# This directory stores the SQLite database during development
-# In production, data is stored at /var/lib/noisy-pi/
-
