@@ -41,6 +41,8 @@ switch ($action) {
                    l10_db, l50_db, l90_db,
                    band_0_200, band_200_500, band_500_1k, band_1k_2k,
                    band_2k_4k, band_4k_8k, band_8k_24k,
+                   band_0_100, band_100_300, band_300_800, band_800_1500,
+                   band_1500_3k, band_3k_6k, band_6k_12k, band_12k_24k,
                    spectral_centroid, spectral_flatness, dominant_freq,
                    silence_pct, dynamic_range,
                    anomaly_score, annotation, sample_seconds, status
@@ -69,6 +71,8 @@ switch ($action) {
                    l10_db, l50_db, l90_db,
                    band_0_200, band_200_500, band_500_1k, band_1k_2k,
                    band_2k_4k, band_4k_8k, band_8k_24k,
+                   band_0_100, band_100_300, band_300_800, band_800_1500,
+                   band_1500_3k, band_3k_6k, band_6k_12k, band_12k_24k,
                    spectral_centroid, spectral_flatness, dominant_freq,
                    silence_pct, dynamic_range,
                    anomaly_score, annotation, sample_seconds, status
@@ -184,7 +188,6 @@ switch ($action) {
                 AVG(band_4k_8k) as avg_band_4k_8k,
                 AVG(band_8k_24k) as avg_band_8k_24k,
                 AVG(spectral_centroid) as avg_centroid,
-                STDEV(mean_db) as std_db,
                 COUNT(*) as count,
                 SUM(CASE WHEN anomaly_score >= 2.5 THEN 1 ELSE 0 END) as anomalies
             FROM measurements

@@ -92,13 +92,14 @@
                 <div class="heatmap-container">
                     <canvas id="heatmap-canvas"></canvas>
                     <div class="heatmap-labels">
-                        <span>8-24k</span>
-                        <span>4-8k</span>
-                        <span>2-4k</span>
-                        <span>1-2k</span>
-                        <span>500-1k</span>
-                        <span>200-500</span>
-                        <span>0-200 Hz</span>
+                        <span>12-24k</span>
+                        <span>6-12k</span>
+                        <span>3-6k</span>
+                        <span>1.5-3k</span>
+                        <span>800-1.5k</span>
+                        <span>300-800</span>
+                        <span>100-300</span>
+                        <span>0-100 Hz</span>
                     </div>
                 </div>
                 <div class="heatmap-colorbar">

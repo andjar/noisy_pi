@@ -86,9 +86,10 @@ class IcecastCapture:
             return False, ""
     
     def analyze_silence(self) -> float:
-        """Analyze silence percentage."""
+        """Analyze silence percentage with a quick 5-second sample."""
+        silence_sample_duration = 5.0  # Quick sample, not full 30s
         af = f"silencedetect=n={config.SILENCE_THRESHOLD_DB}dB:d={config.SILENCE_MIN_DURATION}"
-        success, output = self._run_ffmpeg_filter(af)
+        success, output = self._run_ffmpeg_filter(af, duration=silence_sample_duration)
         
         if not success:
             return None
@@ -100,9 +101,9 @@ class IcecastCapture:
         starts = re.findall(r'silence_start:\s*([\d.]+)', output)
         ends = re.findall(r'silence_end:', output)
         if len(starts) > len(ends) and starts:
-            silence_total += self.sample_duration - float(starts[-1])
+            silence_total += silence_sample_duration - float(starts[-1])
         
-        return round(min(100.0, (silence_total / self.sample_duration) * 100), 2)
+        return round(min(100.0, (silence_total / silence_sample_duration) * 100), 2)
     
     def update_percentiles(self, mean_db: float) -> tuple:
         """Update recent levels and calculate percentiles."""
@@ -161,6 +162,7 @@ class IcecastCapture:
             'l10_db': None,
             'l50_db': None,
             'l90_db': None,
+            # Primary 7 bands
             'band_0_200': None,
             'band_200_500': None,
             'band_500_1k': None,
@@ -168,6 +170,16 @@ class IcecastCapture:
             'band_2k_4k': None,
             'band_4k_8k': None,
             'band_8k_24k': None,
+            # Additional 8 detailed bands
+            'band_0_100': None,
+            'band_100_300': None,
+            'band_300_800': None,
+            'band_800_1500': None,
+            'band_1500_3k': None,
+            'band_3k_6k': None,
+            'band_6k_12k': None,
+            'band_12k_24k': None,
+            # Spectral features
             'spectral_centroid': None,
             'spectral_flatness': None,
             'dominant_freq': None,
@@ -192,9 +204,10 @@ class IcecastCapture:
         )
         
         if spectrogram_data is not None and len(spectrogram_data) > 0:
-            # Extract 7 frequency bands
+            # Extract all frequency bands (7 primary + 8 detailed)
             bands = spectral.get_band_energies(spectrogram_data, config.SAMPLE_RATE, self.n_bins)
             
+            # Primary 7 bands
             data['band_0_200'] = bands.get('band_0_200')
             data['band_200_500'] = bands.get('band_200_500')
             data['band_500_1k'] = bands.get('band_500_1k')
@@ -202,6 +215,16 @@ class IcecastCapture:
             data['band_2k_4k'] = bands.get('band_2k_4k')
             data['band_4k_8k'] = bands.get('band_4k_8k')
             data['band_8k_24k'] = bands.get('band_8k_24k')
+            
+            # Additional 8 detailed bands
+            data['band_0_100'] = bands.get('band_0_100')
+            data['band_100_300'] = bands.get('band_100_300')
+            data['band_300_800'] = bands.get('band_300_800')
+            data['band_800_1500'] = bands.get('band_800_1500')
+            data['band_1500_3k'] = bands.get('band_1500_3k')
+            data['band_3k_6k'] = bands.get('band_3k_6k')
+            data['band_6k_12k'] = bands.get('band_6k_12k')
+            data['band_12k_24k'] = bands.get('band_12k_24k')
             
             # Spectral metrics
             data['spectral_centroid'] = spectral_metrics.get('spectral_centroid')

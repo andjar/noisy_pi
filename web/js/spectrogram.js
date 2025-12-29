@@ -44,7 +44,8 @@ function getColor(value, colormap = 'viridis') {
 }
 
 /**
- * 7-Band Heatmap Renderer (Dashboard)
+ * 15-Band Heatmap Renderer (Dashboard)
+ * Uses detailed frequency bands for better resolution
  */
 class HeatmapRenderer {
     constructor(canvasId) {
@@ -52,10 +53,20 @@ class HeatmapRenderer {
         if (!this.canvas) return;
         this.ctx = this.canvas.getContext('2d');
         this.colormap = 'viridis';
-        this.minDb = -90;
-        this.maxDb = 0;
-        this.bands = ['band_0_200', 'band_200_500', 'band_500_1k', 'band_1k_2k', 'band_2k_4k', 'band_4k_8k', 'band_8k_24k'];
-        this.bandLabels = ['0-200', '200-500', '500-1k', '1k-2k', '2k-4k', '4k-8k', '8k-24k'];
+        
+        // 15 bands from low to high frequency (ordered for display)
+        this.bands = [
+            'band_0_100', 'band_100_300', 'band_300_800', 'band_800_1500',
+            'band_1500_3k', 'band_3k_6k', 'band_6k_12k', 'band_12k_24k'
+        ];
+        this.bandLabels = [
+            '0-100', '100-300', '300-800', '800-1.5k',
+            '1.5-3k', '3-6k', '6-12k', '12-24k'
+        ];
+        
+        // Fallback to original 7 bands if new bands not available
+        this.fallbackBands = ['band_0_200', 'band_200_500', 'band_500_1k', 'band_1k_2k', 'band_2k_4k', 'band_4k_8k', 'band_8k_24k'];
+        this.fallbackLabels = ['0-200', '200-500', '500-1k', '1k-2k', '2k-4k', '4k-8k', '8k-24k'];
         
         // Click handler
         this.canvas.addEventListener('click', (e) => this.handleClick(e));
@@ -68,25 +79,57 @@ class HeatmapRenderer {
     render(data) {
         if (!this.canvas || !data || data.length === 0) return;
         
-        const rect = this.canvas.parentElement.getBoundingClientRect();
-        const width = this.canvas.width = rect.width - 70;
-        const height = this.canvas.height = 180;
+        // Determine which bands to use (new detailed or fallback)
+        const firstSample = data[0];
+        let activeBands, activeLabels;
         
-        const numBands = this.bands.length;
+        if (firstSample.band_0_100 !== undefined && firstSample.band_0_100 !== null) {
+            activeBands = this.bands;
+            activeLabels = this.bandLabels;
+        } else {
+            activeBands = this.fallbackBands;
+            activeLabels = this.fallbackLabels;
+        }
+        
+        const rect = this.canvas.parentElement.getBoundingClientRect();
+        const width = this.canvas.width = rect.width - 80;
+        const height = this.canvas.height = Math.max(180, activeBands.length * 22);
+        
+        const numBands = activeBands.length;
         const numSamples = data.length;
         
         const cellWidth = width / numSamples;
         const cellHeight = height / numBands;
         
+        // Calculate adaptive color range from actual data (excluding nulls and -90 floor)
+        let allValues = [];
+        data.forEach(sample => {
+            activeBands.forEach(band => {
+                const v = parseFloat(sample[band]);
+                if (!isNaN(v) && v > -89) {
+                    allValues.push(v);
+                }
+            });
+        });
+        
+        // Use percentiles for robust range (ignore outliers)
+        allValues.sort((a, b) => a - b);
+        const minDb = allValues.length > 0 ? allValues[Math.floor(allValues.length * 0.02)] : -60;
+        const maxDb = allValues.length > 0 ? allValues[Math.floor(allValues.length * 0.98)] : -20;
+        const range = Math.max(maxDb - minDb, 10);
+        
         // Clear
         this.ctx.fillStyle = '#0a0e14';
         this.ctx.fillRect(0, 0, width, height);
         
-        // Draw heatmap
+        // Draw heatmap with adaptive scaling
         data.forEach((sample, x) => {
-            this.bands.forEach((band, y) => {
-                const db = parseFloat(sample[band]) || this.minDb;
-                const normalized = (db - this.minDb) / (this.maxDb - this.minDb);
+            activeBands.forEach((band, y) => {
+                const db = parseFloat(sample[band]);
+                if (isNaN(db) || db <= -89) {
+                    return;
+                }
+                const normalized = (db - minDb) / range;
                 const color = getColor(Math.max(0, Math.min(1, normalized)), this.colormap);
                 
                 this.ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
@@ -95,6 +138,18 @@ class HeatmapRenderer {
                 this.ctx.fillRect(x * cellWidth, invertedY * cellHeight, cellWidth + 0.5, cellHeight + 0.5);
             });
         });
+        
+        // Update colorbar labels
+        const colorbarMin = document.querySelector('.heatmap-colorbar span:first-child');
+        const colorbarMax = document.querySelector('.heatmap-colorbar span:last-child');
+        if (colorbarMin) colorbarMin.textContent = minDb.toFixed(0) + ' dB';
+        if (colorbarMax) colorbarMax.textContent = maxDb.toFixed(0) + ' dB';
+        
+        // Update band labels in the UI
+        const labelsContainer = document.querySelector('.heatmap-labels');
+        if (labelsContainer) {
+            labelsContainer.innerHTML = [...activeLabels].reverse().map(l => `<span>${l}</span>`).join('');
+        }
         
         this.currentData = data;
     }
@@ -117,6 +172,7 @@ class HeatmapRenderer {
 
 /**
  * Full Spectrogram Renderer (Spectrogram Tab)
+ * Uses all available frequency bands for detailed visualization
  */
 class SpectrogramRenderer {
     constructor(canvasId) {
@@ -124,8 +180,17 @@ class SpectrogramRenderer {
         if (!this.canvas) return;
         this.ctx = this.canvas.getContext('2d');
         this.colormap = 'viridis';
-        this.minDb = -90;
-        this.maxDb = 0;
+        
+        // Detailed bands (8 total)
+        this.detailedBands = [
+            'band_0_100', 'band_100_300', 'band_300_800', 'band_800_1500',
+            'band_1500_3k', 'band_3k_6k', 'band_6k_12k', 'band_12k_24k'
+        ];
+        this.detailedLabels = ['0-100', '100-300', '300-800', '800-1.5k', '1.5-3k', '3-6k', '6-12k', '12-24k'];
+        
+        // Fallback bands (7 total)
+        this.fallbackBands = ['band_0_200', 'band_200_500', 'band_500_1k', 'band_1k_2k', 'band_2k_4k', 'band_4k_8k', 'band_8k_24k'];
+        this.fallbackLabels = ['0-200', '200-500', '500-1k', '1-2k', '2-4k', '4-8k', '8k+'];
     }
 
     setColormap(cm) {
@@ -135,34 +200,66 @@ class SpectrogramRenderer {
     renderFull(data) {
         if (!this.canvas || !data || data.length === 0) return;
         
+        // Determine which bands to use
+        const firstSample = data[0];
+        let bands, bandLabels;
+        
+        if (firstSample.band_0_100 !== undefined && firstSample.band_0_100 !== null) {
+            bands = this.detailedBands;
+            bandLabels = this.detailedLabels;
+        } else {
+            bands = this.fallbackBands;
+            bandLabels = this.fallbackLabels;
+        }
+        
         const container = this.canvas.parentElement;
         const width = this.canvas.width = container.clientWidth;
-        const height = this.canvas.height = container.clientHeight || 250;
+        const height = this.canvas.height = container.clientHeight || 280;
         
         // Clear
         this.ctx.fillStyle = '#0a0e14';
         this.ctx.fillRect(0, 0, width, height);
         
-        const bands = ['band_0_200', 'band_200_500', 'band_500_1k', 'band_1k_2k', 'band_2k_4k', 'band_4k_8k', 'band_8k_24k'];
         const numBands = bands.length;
         const numSamples = data.length;
         
-        const cellWidth = width / numSamples;
-        const cellHeight = height / numBands;
+        // Calculate adaptive color range
+        let allValues = [];
+        data.forEach(sample => {
+            bands.forEach(band => {
+                const v = parseFloat(sample[band]);
+                if (!isNaN(v) && v > -89) {
+                    allValues.push(v);
+                }
+            });
+        });
+        allValues.sort((a, b) => a - b);
+        const minDb = allValues.length > 0 ? allValues[Math.floor(allValues.length * 0.02)] : -60;
+        const maxDb = allValues.length > 0 ? allValues[Math.floor(allValues.length * 0.98)] : -20;
+        const range = Math.max(maxDb - minDb, 10);
+        
+        const marginLeft = 65;
+        const marginBottom = 25;
+        const plotWidth = width - marginLeft;
+        const plotHeight = height - marginBottom;
+        
+        const cellWidth = plotWidth / numSamples;
+        const cellHeight = plotHeight / numBands;
         
         // Draw from oldest to newest (left to right)
         const sortedData = [...data].reverse();
         
         sortedData.forEach((sample, x) => {
             bands.forEach((band, y) => {
-                const db = parseFloat(sample[band]) || this.minDb;
-                const normalized = (db - this.minDb) / (this.maxDb - this.minDb);
+                const db = parseFloat(sample[band]);
+                if (isNaN(db) || db <= -89) return;
+                
+                const normalized = (db - minDb) / range;
                 const color = getColor(Math.max(0, Math.min(1, normalized)), this.colormap);
                 
                 this.ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
-                // Invert y so low frequencies are at bottom
                 const invertedY = numBands - 1 - y;
-                this.ctx.fillRect(x * cellWidth, invertedY * cellHeight, cellWidth + 0.5, cellHeight + 0.5);
+                this.ctx.fillRect(marginLeft + x * cellWidth, invertedY * cellHeight, cellWidth + 0.5, cellHeight + 0.5);
             });
         });
         
@@ -176,16 +273,22 @@ class SpectrogramRenderer {
             const sample = sortedData[i];
             if (sample && sample.timestamp) {
                 const time = new Date(sample.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                this.ctx.fillText(time, i * cellWidth + cellWidth / 2, height - 5);
+                this.ctx.fillText(time, marginLeft + i * cellWidth + cellWidth / 2, height - 5);
             }
         }
         
-        // Draw frequency labels
+        // Draw frequency labels (reversed so low freq at bottom)
         this.ctx.textAlign = 'right';
-        const freqLabels = ['8k+', '4-8k', '2-4k', '1-2k', '.5-1k', '200-500', '0-200'];
-        freqLabels.forEach((label, y) => {
-            this.ctx.fillText(label, 45, y * cellHeight + cellHeight / 2 + 4);
+        const reversedLabels = [...bandLabels].reverse();
+        reversedLabels.forEach((label, y) => {
+            this.ctx.fillText(label, marginLeft - 5, y * cellHeight + cellHeight / 2 + 4);
         });
+        
+        // Update colorbar
+        const colorbarMin = document.querySelector('.spectrogram-colorbar span:first-child');
+        const colorbarMax = document.querySelector('.spectrogram-colorbar span:last-child');
+        if (colorbarMin) colorbarMin.textContent = minDb.toFixed(0) + ' dB';
+        if (colorbarMax) colorbarMax.textContent = maxDb.toFixed(0) + ' dB';
     }
 
     // Render band-based spectrogram from data with 7 bands

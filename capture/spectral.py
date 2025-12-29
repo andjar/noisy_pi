@@ -249,8 +249,9 @@ def get_band_energies(spectrogram: np.ndarray, sample_rate: int, n_bins: int) ->
             return float(20 * np.log10(max(energy, 1e-10)))
         return -90.0
     
-    # 7 frequency bands covering 0-24kHz
+    # 12 frequency bands covering 0-24kHz for detailed analysis
     bands = {
+        # Original 7 bands (for backward compatibility)
         'band_0_200': band_energy(0, 200),          # Sub-bass/bass
         'band_200_500': band_energy(200, 500),      # Low-mid
         'band_500_1k': band_energy(500, 1000),      # Mid
@@ -258,6 +259,16 @@ def get_band_energies(spectrogram: np.ndarray, sample_rate: int, n_bins: int) ->
         'band_2k_4k': band_energy(2000, 4000),      # Presence
         'band_4k_8k': band_energy(4000, 8000),      # Brilliance
         'band_8k_24k': band_energy(8000, 24000),    # Air/ultrasonic
+        
+        # Additional 5 bands for finer resolution
+        'band_0_100': band_energy(0, 100),          # Infrasound/rumble
+        'band_100_300': band_energy(100, 300),      # Bass
+        'band_300_800': band_energy(300, 800),      # Low-mid detail
+        'band_800_1500': band_energy(800, 1500),    # Mid detail
+        'band_1500_3k': band_energy(1500, 3000),    # Upper-mid detail
+        'band_3k_6k': band_energy(3000, 6000),      # Presence detail
+        'band_6k_12k': band_energy(6000, 12000),    # Brilliance detail
+        'band_12k_24k': band_energy(12000, 24000),  # Ultrasonic
     }
     
     return bands

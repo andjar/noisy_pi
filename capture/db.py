@@ -28,7 +28,7 @@ def init_db():
                 l50_db REAL,
                 l90_db REAL,
                 
-                -- 7 frequency bands (dB) covering 0-24kHz
+                -- 7 primary frequency bands (dB) covering 0-24kHz
                 band_0_200 REAL,      -- 0-200 Hz (sub-bass, bass)
                 band_200_500 REAL,    -- 200-500 Hz (low-mid)
                 band_500_1k REAL,     -- 500-1000 Hz (mid)
@@ -36,6 +36,16 @@ def init_db():
                 band_2k_4k REAL,      -- 2-4 kHz (presence)
                 band_4k_8k REAL,      -- 4-8 kHz (brilliance)
                 band_8k_24k REAL,     -- 8-24 kHz (air/ultrasonic)
+                
+                -- 8 additional frequency bands for detailed analysis
+                band_0_100 REAL,      -- 0-100 Hz (infrasound/rumble)
+                band_100_300 REAL,    -- 100-300 Hz (bass)
+                band_300_800 REAL,    -- 300-800 Hz (low-mid detail)
+                band_800_1500 REAL,   -- 800-1500 Hz (mid detail)
+                band_1500_3k REAL,    -- 1500-3000 Hz (upper-mid detail)
+                band_3k_6k REAL,      -- 3-6 kHz (presence detail)
+                band_6k_12k REAL,     -- 6-12 kHz (brilliance detail)
+                band_12k_24k REAL,    -- 12-24 kHz (ultrasonic)
                 
                 -- Spectral features
                 spectral_centroid REAL,
@@ -123,6 +133,8 @@ def store_measurement(data: dict) -> int:
                 l10_db, l50_db, l90_db,
                 band_0_200, band_200_500, band_500_1k, band_1k_2k,
                 band_2k_4k, band_4k_8k, band_8k_24k,
+                band_0_100, band_100_300, band_300_800, band_800_1500,
+                band_1500_3k, band_3k_6k, band_6k_12k, band_12k_24k,
                 spectral_centroid, spectral_flatness, dominant_freq,
                 silence_pct, dynamic_range,
                 anomaly_score, sample_seconds, status,
@@ -132,6 +144,8 @@ def store_measurement(data: dict) -> int:
                 :l10_db, :l50_db, :l90_db,
                 :band_0_200, :band_200_500, :band_500_1k, :band_1k_2k,
                 :band_2k_4k, :band_4k_8k, :band_8k_24k,
+                :band_0_100, :band_100_300, :band_300_800, :band_800_1500,
+                :band_1500_3k, :band_3k_6k, :band_6k_12k, :band_12k_24k,
                 :spectral_centroid, :spectral_flatness, :dominant_freq,
                 :silence_pct, :dynamic_range,
                 :anomaly_score, :sample_seconds, :status,

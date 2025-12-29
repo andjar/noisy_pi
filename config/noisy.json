@@ -2,7 +2,7 @@
     "icecast_url": "http://localhost:8000/stream",
     "sample_rate": 48000,
     "sample_duration": 30,
-    "sample_interval": 30,
+    "sample_interval": 5,
     "fft_bins": 256,
     "db_min": -90,
     "db_max": 10,
