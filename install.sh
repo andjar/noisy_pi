@@ -203,6 +203,7 @@ setup_files() {
     sudo cp -r "${SOURCE_DIR}/capture" "$INSTALL_DIR/"
     sudo cp -r "${SOURCE_DIR}/web" "$INSTALL_DIR/"
     sudo cp -r "${SOURCE_DIR}/systemd" "$INSTALL_DIR/"
+    sudo cp -r "${SOURCE_DIR}/config" "$INSTALL_DIR/"
     
     # Set ownership
     sudo chown -R $USER:$USER "$INSTALL_DIR"
