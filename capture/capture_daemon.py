@@ -35,6 +35,13 @@ def setup_logging(debug: bool = False):
     
     log_level = logging.DEBUG if debug else logging.INFO
     
+    # Get logger for this module (not root to avoid duplicates)
+    logger = logging.getLogger('noisy_pi')
+    
+    # Clear any existing handlers to prevent duplicates
+    logger.handlers.clear()
+    logger.setLevel(log_level)
+    
     # File handler
     log_file = LOG_DIR / "capture.log"
     file_handler = logging.FileHandler(log_file)
@@ -43,18 +50,18 @@ def setup_logging(debug: bool = False):
         '%(asctime)s - %(levelname)s - %(message)s'
     ))
     
-    # Console handler
+    # Console handler (for systemd journal)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(logging.Formatter(
         '%(asctime)s - %(levelname)s - %(message)s'
     ))
     
-    # Root logger
-    logger = logging.getLogger()
-    logger.setLevel(log_level)
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    
+    # Prevent propagation to root logger (avoids duplicates)
+    logger.propagate = False
     
     return logger
 

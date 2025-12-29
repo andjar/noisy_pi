@@ -21,7 +21,7 @@ StandardError=append:/var/log/noisy-pi/web.log
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/lib/noisy-pi /var/log/noisy-pi
+ReadWritePaths=/var/lib/noisy-pi /var/log/noisy-pi /opt/noisy-pi/config
 PrivateTmp=yes
 
 [Install]
