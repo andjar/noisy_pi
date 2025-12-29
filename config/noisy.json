@@ -1,7 +1,7 @@
 {
-    "icecast_url": "http://127.0.0.1/stream",
+    "icecast_url": "http://localhost:8000/stream",
     "sample_rate": 48000,
-    "sample_duration": 15,
+    "sample_duration": 30,
     "sample_interval": 30,
     "fft_bins": 256,
     "db_min": -90,
@@ -10,5 +10,6 @@
     "baseline_min_samples": 100,
     "snippet_enabled": false,
     "snippet_duration": 5,
+    "refresh_interval": 30,
     "web_port": 8080
 }

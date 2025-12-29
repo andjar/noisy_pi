@@ -1,6 +1,6 @@
 <?php
 /**
- * Noisy Pi API
+ * Noisy Pi API - Enhanced
  */
 
 header('Content-Type: application/json');
@@ -33,7 +33,7 @@ $action = $_GET['action'] ?? 'recent';
 switch ($action) {
     case 'recent':
         $limit = intval($_GET['limit'] ?? 100);
-        $limit = min(max($limit, 1), 5000);
+        $limit = min(max($limit, 1), 10000);
         
         $db = get_db();
         $stmt = $db->prepare('
@@ -57,6 +57,35 @@ switch ($action) {
         }
         
         echo json_encode(['data' => $rows]);
+        break;
+        
+    case 'range':
+        $start = $_GET['start'] ?? date('Y-m-d', strtotime('-7 days'));
+        $end = $_GET['end'] ?? date('Y-m-d');
+        
+        $db = get_db();
+        $stmt = $db->prepare('
+            SELECT id, timestamp, unix_time, mean_db, max_db, min_db,
+                   l10_db, l50_db, l90_db,
+                   band_0_200, band_200_500, band_500_1k, band_1k_2k,
+                   band_2k_4k, band_4k_8k, band_8k_24k,
+                   spectral_centroid, spectral_flatness, dominant_freq,
+                   silence_pct, dynamic_range,
+                   anomaly_score, annotation, sample_seconds, status
+            FROM measurements
+            WHERE date(timestamp) >= :start AND date(timestamp) <= :end
+            ORDER BY unix_time ASC
+        ');
+        $stmt->bindValue(':start', $start, SQLITE3_TEXT);
+        $stmt->bindValue(':end', $end, SQLITE3_TEXT);
+        $result = $stmt->execute();
+        
+        $rows = [];
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            $rows[] = $row;
+        }
+        
+        echo json_encode(['data' => $rows, 'count' => count($rows)]);
         break;
         
     case 'spectrogram':
@@ -90,8 +119,8 @@ switch ($action) {
             exit;
         }
         
-        $n_snapshots = $row['spectrogram_snapshots'];
-        $n_bins = $row['spectrogram_bins'];
+        $n_snapshots = $row['spectrogram_snapshots'] ?: 10;
+        $n_bins = $row['spectrogram_bins'] ?: 256;
         
         // Convert to array of arrays (dequantize)
         $data = [];
@@ -114,7 +143,7 @@ switch ($action) {
             'snapshots' => $n_snapshots,
             'bins' => $n_bins,
             'timestamp' => $row['timestamp'],
-            'freq_max' => 24000  // Nyquist for 48kHz
+            'freq_max' => 24000
         ]);
         break;
         
@@ -128,11 +157,20 @@ switch ($action) {
             case '6h': $seconds = 21600; break;
             case '24h': $seconds = 86400; break;
             case '7d': $seconds = 604800; break;
+            case '30d': $seconds = 2592000; break;
+            case 'all': $seconds = 0; break;
             default: $seconds = 3600;
         }
-        $threshold = time() - $seconds;
         
-        $stmt = $db->prepare('
+        if ($seconds > 0) {
+            $threshold = time() - $seconds;
+            $where = "WHERE unix_time >= :threshold";
+        } else {
+            $threshold = 0;
+            $where = "";
+        }
+        
+        $sql = "
             SELECT 
                 AVG(mean_db) as avg_db,
                 MAX(max_db) as max_db,
@@ -146,12 +184,17 @@ switch ($action) {
                 AVG(band_4k_8k) as avg_band_4k_8k,
                 AVG(band_8k_24k) as avg_band_8k_24k,
                 AVG(spectral_centroid) as avg_centroid,
+                STDEV(mean_db) as std_db,
                 COUNT(*) as count,
                 SUM(CASE WHEN anomaly_score >= 2.5 THEN 1 ELSE 0 END) as anomalies
             FROM measurements
-            WHERE unix_time >= :threshold
-        ');
-        $stmt->bindValue(':threshold', $threshold, SQLITE3_INTEGER);
+            $where
+        ";
+        
+        $stmt = $db->prepare($sql);
+        if ($seconds > 0) {
+            $stmt->bindValue(':threshold', $threshold, SQLITE3_INTEGER);
+        }
         $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
         
         echo json_encode(['data' => $row]);
@@ -196,6 +239,30 @@ switch ($action) {
         $rows = [];
         while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
             $row['hour'] = intval($row['hour']);
+            $rows[] = $row;
+        }
+        
+        echo json_encode(['data' => $rows]);
+        break;
+        
+    case 'baseline':
+        $db = get_db();
+        
+        // Check if baseline table exists
+        $check = $db->querySingle("SELECT name FROM sqlite_master WHERE type='table' AND name='baseline'");
+        if (!$check) {
+            echo json_encode(['data' => [], 'error' => 'No baseline data yet']);
+            exit;
+        }
+        
+        $result = $db->query('
+            SELECT day_of_week, hour, mean_db_avg, mean_db_std, samples
+            FROM baseline
+            ORDER BY day_of_week, hour
+        ');
+        
+        $rows = [];
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
             $rows[] = $row;
         }
         
@@ -301,8 +368,88 @@ switch ($action) {
             echo json_encode(['error' => 'Config not found']);
             exit;
         }
-        echo file_get_contents($config_path);
+        $config = json_decode(file_get_contents($config_path), true);
+        // Only expose safe config options
+        echo json_encode([
+            'anomaly_threshold' => $config['anomaly_threshold'] ?? 2.5,
+            'snippet_enabled' => $config['snippet_enabled'] ?? false,
+            'snippet_duration' => $config['snippet_duration'] ?? 5,
+            'refresh_interval' => $config['refresh_interval'] ?? 30
+        ]);
         break;
+        
+    case 'save_config':
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            http_response_code(405);
+            echo json_encode(['error' => 'POST required']);
+            exit;
+        }
+        
+        if (!file_exists($config_path)) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Config not found']);
+            exit;
+        }
+        
+        $input = json_decode(file_get_contents('php://input'), true);
+        $config = json_decode(file_get_contents($config_path), true);
+        
+        // Only allow updating specific fields
+        $allowed = ['anomaly_threshold', 'snippet_enabled', 'snippet_duration', 'refresh_interval'];
+        foreach ($allowed as $key) {
+            if (isset($input[$key])) {
+                $config[$key] = $input[$key];
+            }
+        }
+        
+        $result = file_put_contents($config_path, json_encode($config, JSON_PRETTY_PRINT));
+        
+        if ($result === false) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to save config']);
+            exit;
+        }
+        
+        echo json_encode(['success' => true]);
+        break;
+        
+    case 'export':
+        $format = $_GET['format'] ?? 'csv';
+        $start = $_GET['start'] ?? date('Y-m-d', strtotime('-7 days'));
+        $end = $_GET['end'] ?? date('Y-m-d');
+        
+        $db = get_db();
+        $stmt = $db->prepare('
+            SELECT timestamp, mean_db, max_db, min_db,
+                   l10_db, l50_db, l90_db,
+                   band_0_200, band_200_500, band_500_1k, band_1k_2k,
+                   band_2k_4k, band_4k_8k, band_8k_24k,
+                   spectral_centroid, spectral_flatness, dominant_freq,
+                   silence_pct, anomaly_score, annotation
+            FROM measurements
+            WHERE date(timestamp) >= :start AND date(timestamp) <= :end
+            ORDER BY unix_time ASC
+        ');
+        $stmt->bindValue(':start', $start, SQLITE3_TEXT);
+        $stmt->bindValue(':end', $end, SQLITE3_TEXT);
+        $result = $stmt->execute();
+        
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="noisy_pi_' . $start . '_' . $end . '.csv"');
+        
+        $first = true;
+        $output = fopen('php://output', 'w');
+        
+        while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+            if ($first) {
+                fputcsv($output, array_keys($row));
+                $first = false;
+            }
+            fputcsv($output, $row);
+        }
+        
+        fclose($output);
+        exit;
         
     default:
         http_response_code(400);
