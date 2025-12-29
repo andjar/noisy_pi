@@ -36,14 +36,20 @@ If you have BirdNET-Pi installed, most dependencies are already present.
 ### One-liner Install
 
 ```bash
-curl -s https://raw.githubusercontent.com/YOUR_USERNAME/noisy-pi/main/install.sh | bash
+curl -s https://raw.githubusercontent.com/andjar/noisy_pi/main/install.sh | bash
+```
+
+If port 8080 is already in use (e.g., by another service), the installer will automatically try ports 8081-8085. You can also specify a port:
+
+```bash
+NOISY_PI_PORT=8090 curl -s https://raw.githubusercontent.com/andjar/noisy_pi/main/install.sh | bash
 ```
 
 ### Manual Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/noisy-pi.git
-cd noisy-pi
+git clone https://github.com/andjar/noisy_pi.git
+cd noisy_pi
 ./install.sh
 ```
 

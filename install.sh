@@ -4,10 +4,10 @@
 # Ambient noise monitoring for Raspberry Pi
 #
 # Usage:
-#   curl -s https://raw.githubusercontent.com/YOUR_USERNAME/noisy-pi/main/install.sh | bash
+#   curl -s https://raw.githubusercontent.com/andjar/noisy_pi/main/install.sh | bash
 #
 # Or clone and run:
-#   git clone https://github.com/YOUR_USERNAME/noisy-pi.git
+#   git clone https://github.com/andjar/noisy_pi.git
 #   cd noisy-pi && ./install.sh
 #
 
@@ -24,8 +24,8 @@ NC='\033[0m' # No Color
 INSTALL_DIR="/opt/noisy-pi"
 DATA_DIR="/var/lib/noisy-pi"
 LOG_DIR="/var/log/noisy-pi"
-WEB_PORT=8080
-REPO_URL="https://github.com/YOUR_USERNAME/noisy-pi.git"
+WEB_PORT="${NOISY_PI_PORT:-8080}"
+REPO_URL="https://github.com/andjar/noisy_pi.git"
 
 # Logging
 log() {
@@ -117,9 +117,20 @@ check_requirements() {
         warn "PHP not found. Will install."
     fi
     
-    # Check if port 8080 is available
+    # Check if port is available, try alternatives if not
     if ss -tuln | grep -q ":${WEB_PORT} "; then
-        warn "Port ${WEB_PORT} is already in use. You may need to change the web port."
+        warn "Port ${WEB_PORT} is already in use."
+        # Try alternative ports
+        for ALT_PORT in 8081 8082 8083 8084 8085; do
+            if ! ss -tuln | grep -q ":${ALT_PORT} "; then
+                log "Using alternative port: ${ALT_PORT}"
+                WEB_PORT=$ALT_PORT
+                break
+            fi
+        done
+        if ss -tuln | grep -q ":${WEB_PORT} "; then
+            warn "No free port found in 8080-8085. You can set NOISY_PI_PORT=XXXX before running install."
+        fi
     else
         log "Port ${WEB_PORT}: Available"
     fi
@@ -136,7 +147,8 @@ install_dependencies() {
     
     log "Installing required packages..."
     sudo apt-get install -y -qq \
-        python3-pip \
+        python3-full \
+        python3-venv \
         python3-numpy \
         python3-scipy \
         php-cli \
@@ -144,12 +156,25 @@ install_dependencies() {
         sqlite3 \
         libportaudio2 \
         portaudio19-dev \
+        libsndfile1 \
         git
     
-    log "Installing Python packages..."
-    pip3 install --user --quiet sounddevice soundfile
-    
     log "Dependencies installed!"
+}
+
+# Create Python virtual environment
+setup_venv() {
+    header "Setting Up Python Environment"
+    
+    VENV_DIR="$INSTALL_DIR/venv"
+    
+    log "Creating virtual environment at $VENV_DIR..."
+    python3 -m venv "$VENV_DIR" --system-site-packages
+    
+    log "Installing Python packages in venv..."
+    "$VENV_DIR/bin/pip" install --quiet sounddevice soundfile
+    
+    log "Python environment ready!"
 }
 
 # Download or copy source files
@@ -207,7 +232,7 @@ init_database() {
     export NOISY_PI_LOG="$LOG_DIR"
     
     log "Creating database schema..."
-    python3 db.py --init
+    "$INSTALL_DIR/venv/bin/python3" db.py --init
     
     log "Database initialized at ${DATA_DIR}/noisy.db"
 }
@@ -219,7 +244,7 @@ test_audio() {
     cd "$INSTALL_DIR/capture"
     
     log "Available audio devices:"
-    python3 capture_daemon.py --list-devices || true
+    "$INSTALL_DIR/venv/bin/python3" capture_daemon.py --list-devices || true
     
     log ""
     log "If you see your microphone listed above, audio capture should work."
@@ -235,11 +260,15 @@ install_services() {
     CURRENT_UID=$(id -u)
     
     log "Configuring services for user: $CURRENT_USER (UID: $CURRENT_UID)"
+    log "Web dashboard will run on port: $WEB_PORT"
     
-    # Create service files with correct user
+    # Update config with selected port
+    sed -i "s/\"web_port\": 8080/\"web_port\": $WEB_PORT/" "$INSTALL_DIR/config/noisy.json"
+    
+    # Create service files with correct user and port
     sudo sed "s/User=pi/User=$CURRENT_USER/g; s/Group=pi/Group=$CURRENT_USER/g; s|/run/user/1000|/run/user/$CURRENT_UID|g" \
         "$INSTALL_DIR/systemd/noisy-capture.service" > /tmp/noisy-capture.service
-    sudo sed "s/User=pi/User=$CURRENT_USER/g; s/Group=pi/Group=$CURRENT_USER/g" \
+    sudo sed "s/User=pi/User=$CURRENT_USER/g; s/Group=pi/Group=$CURRENT_USER/g; s/:8080/:$WEB_PORT/g" \
         "$INSTALL_DIR/systemd/noisy-web.service" > /tmp/noisy-web.service
     
     # Install service files
@@ -326,7 +355,9 @@ print_complete() {
     echo ""
     echo "Access the dashboard at:"
     echo -e "  ${BLUE}http://${HOSTNAME}.local:${WEB_PORT}${NC}"
-    echo -e "  ${BLUE}http://${IP_ADDR}:${WEB_PORT}${NC}"
+    if [[ -n "$IP_ADDR" ]]; then
+        echo -e "  ${BLUE}http://${IP_ADDR}:${WEB_PORT}${NC}"
+    fi
     echo ""
     echo "Useful commands:"
     echo "  View capture logs:    journalctl -u noisy-capture -f"
@@ -357,6 +388,7 @@ main() {
     check_requirements
     install_dependencies
     setup_files
+    setup_venv
     init_database
     test_audio
     install_services

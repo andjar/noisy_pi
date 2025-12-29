@@ -1,6 +1,6 @@
 [Unit]
 Description=Noisy Pi Web Dashboard
-Documentation=https://github.com/YOUR_USERNAME/noisy-pi
+Documentation=https://github.com/andjar/noisy_pi
 After=network.target noisy-capture.service
 
 [Service]
