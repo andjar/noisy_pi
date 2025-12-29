@@ -9,11 +9,12 @@ A privacy-respecting 24/7 ambient noise monitoring system for Raspberry Pi. Capt
 - **24/7 Acoustic Monitoring** - Continuous sound level measurement with LAeq, Lmax, Lmin, and percentile levels
 - **256-bin Spectrogram** - Detailed frequency analysis from 0-24kHz
 - **Privacy-First Design** - Only stores acoustic features, never raw audio. 3-second averaging makes speech reconstruction impossible
+- **BirdNET-Pi Integration** - Automatically analyzes BirdNET-Pi's recordings without any conflicts
 - **Anomaly Detection** - Learns your soundscape patterns and flags unusual events
 - **Anomaly Audio Snippets** - Optional: save short audio clips (5 seconds) when anomalies occur to identify what caused them
 - **Manual Annotations** - Tag interesting events for later reference
 - **Modern Dashboard** - BirdNET-Pi-inspired interface with spectrogram heatmap and time-series charts
-- **Low Resource Usage** - ~5% CPU, ~60MB RAM on Pi 5
+- **Low Resource Usage** - ~3% CPU, ~40MB RAM on Pi 5 (file-watch mode)
 
 ## Screenshot
 
@@ -96,6 +97,43 @@ What CANNOT be recovered:
 - Speaker identity
 - Conversation content
 
+## Capture Modes
+
+Noisy Pi supports two capture modes:
+
+### File-Watch Mode (Default, Recommended)
+
+Analyzes BirdNET-Pi's pre-recorded WAV files from `~/BirdSongs/StreamData/`. This mode:
+
+- **Zero audio conflicts** - Never touches the microphone directly
+- **Lower resource usage** - No real-time audio processing
+- **Perfect synchronization** - Analyzes the exact same audio that BirdNET processes
+- **Graceful handling** - If BirdNET deletes a file before we process it, we simply skip it
+
+### Direct Capture Mode
+
+Captures audio directly from PulseAudio. Use this if you don't have BirdNET-Pi installed.
+
+**Warning**: May conflict with BirdNET-Pi's audio access.
+
+To switch modes, edit the config:
+
+```json
+{
+    "file_watch_mode": true,   // false for direct capture
+    "birdnet_stream_dir": "/home/ubuntu/BirdSongs/StreamData"
+}
+```
+
+Or use command line:
+```bash
+# Force file-watch mode
+/opt/noisy-pi/venv/bin/python3 /opt/noisy-pi/capture/capture_daemon.py --mode file-watch
+
+# Force direct capture mode  
+/opt/noisy-pi/venv/bin/python3 /opt/noisy-pi/capture/capture_daemon.py --mode direct
+```
+
 ## Configuration
 
 Edit `/opt/noisy-pi/config/noisy.json`:
@@ -111,7 +149,12 @@ Edit `/opt/noisy-pi/config/noisy.json`:
     
     "save_anomaly_snippets": false,
     "snippet_duration": 5.0,
-    "snippet_threshold": 2.5
+    "snippet_threshold": 2.5,
+    
+    "file_watch_mode": true,
+    "birdnet_stream_dir": "/home/ubuntu/BirdSongs/StreamData",
+    "file_watch_poll_interval": 1.0,
+    "file_settle_time": 2.0
 }
 ```
 
@@ -196,13 +239,32 @@ The spectrogram shows frequency (vertical, 0-24kHz) over time (horizontal). Comm
 Noisy Pi is designed to run alongside BirdNET-Pi:
 
 - Uses port 8080 (BirdNET-Pi uses 80/443)
-- Reads audio via PulseAudio monitor source (non-interfering)
+- **File-watch mode** (default): Analyzes BirdNET's recordings - zero audio conflicts
+- **Read-only access**: Never modifies or deletes BirdNET's files
 - Uses separate SQLite database
-- Low resource footprint (~5% CPU)
+- Low resource footprint (~3% CPU in file-watch mode)
+
+The file-watch approach means Noisy Pi processes the same audio files that BirdNET records, after they're written. This eliminates all microphone access conflicts.
 
 ## Troubleshooting
 
-### No Audio Devices Found
+### No Measurements Being Recorded (File-Watch Mode)
+
+```bash
+# Check if BirdNET StreamData directory exists
+ls -la ~/BirdSongs/StreamData/
+
+# Check recent WAV files
+find ~/BirdSongs/StreamData -name "*.wav" -mmin -5 -ls
+
+# View capture daemon logs
+journalctl -u noisy-capture -f
+
+# Check config path
+cat /opt/noisy-pi/config/noisy.json | grep birdnet_stream_dir
+```
+
+### No Audio Devices Found (Direct Capture Mode)
 
 ```bash
 # Check PulseAudio
@@ -210,7 +272,7 @@ pulseaudio --check
 pactl list sources short
 
 # List available devices
-python3 /opt/noisy-pi/capture/capture_daemon.py --list-devices
+/opt/noisy-pi/venv/bin/python3 /opt/noisy-pi/capture/capture_daemon.py --list-devices
 ```
 
 ### Dashboard Not Loading
@@ -223,7 +285,7 @@ curl http://localhost:8080/api.php?action=status
 
 ### High CPU Usage
 
-This is usually during FFT processing. Should settle to ~3-5% on Pi 5.
+This is usually during FFT processing. Should settle to ~3% on Pi 5 in file-watch mode.
 
 ## API Endpoints
 

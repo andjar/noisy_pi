@@ -24,6 +24,12 @@ SAMPLE_RATE = 48000  # Hz - standard for most USB mics
 CHANNELS = 1  # Mono
 BLOCK_SIZE = 4096  # Samples per callback
 
+# File-watching mode (uses BirdNET-Pi's recordings instead of direct capture)
+FILE_WATCH_MODE = True  # Default to file-watching to avoid audio conflicts
+BIRDNET_STREAM_DIR = Path.home() / "BirdSongs" / "StreamData"
+FILE_WATCH_POLL_INTERVAL = 1.0  # Seconds between directory scans
+FILE_SETTLE_TIME = 2.0  # Wait for file to finish writing before processing
+
 # Analysis settings
 FFT_BINS = 256  # Number of frequency bins
 SNAPSHOT_DURATION = 3.0  # Seconds per snapshot
@@ -81,5 +87,10 @@ def get_config():
         "save_anomaly_snippets": file_config.get("save_anomaly_snippets", SAVE_ANOMALY_SNIPPETS),
         "snippet_duration": file_config.get("snippet_duration", SNIPPET_DURATION),
         "snippet_threshold": file_config.get("snippet_threshold", SNIPPET_THRESHOLD),
+        # File-watching mode
+        "file_watch_mode": file_config.get("file_watch_mode", FILE_WATCH_MODE),
+        "birdnet_stream_dir": file_config.get("birdnet_stream_dir", str(BIRDNET_STREAM_DIR)),
+        "file_watch_poll_interval": file_config.get("file_watch_poll_interval", FILE_WATCH_POLL_INTERVAL),
+        "file_settle_time": file_config.get("file_settle_time", FILE_SETTLE_TIME),
     }
 

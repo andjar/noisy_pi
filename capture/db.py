@@ -104,6 +104,23 @@ def init_database():
             )
         """)
         
+        # Processed files tracking (for file-watching mode)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS processed_files (
+                filename TEXT PRIMARY KEY,
+                processed_at INTEGER,
+                file_size INTEGER,
+                measurement_id INTEGER,
+                FOREIGN KEY (measurement_id) REFERENCES measurements(id)
+            )
+        """)
+        
+        # Index for cleanup of old entries
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_processed_files_time 
+            ON processed_files(processed_at)
+        """)
+        
         conn.commit()
         print(f"Database initialized at {DB_PATH}")
 
@@ -345,6 +362,43 @@ def get_hourly_stats(start_time: int, end_time: int) -> List[Dict[str, Any]]:
             ORDER BY hour_start
         """, (start_time, end_time))
         return [dict(row) for row in cursor]
+
+
+def is_file_processed(filename: str) -> bool:
+    """Check if a file has already been processed."""
+    with get_connection() as conn:
+        cursor = conn.execute("""
+            SELECT 1 FROM processed_files WHERE filename = ?
+        """, (filename,))
+        return cursor.fetchone() is not None
+
+
+def mark_file_processed(filename: str, file_size: int, measurement_id: int = None):
+    """Mark a file as processed."""
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO processed_files 
+            (filename, processed_at, file_size, measurement_id)
+            VALUES (?, ?, ?, ?)
+        """, (filename, int(time.time()), file_size, measurement_id))
+        conn.commit()
+
+
+def cleanup_old_processed_files(days: int = 7):
+    """Remove entries older than N days to keep the table small."""
+    cutoff = int(time.time()) - (days * 86400)
+    with get_connection() as conn:
+        conn.execute("""
+            DELETE FROM processed_files WHERE processed_at < ?
+        """, (cutoff,))
+        conn.commit()
+
+
+def get_processed_file_count() -> int:
+    """Get count of processed files (for stats)."""
+    with get_connection() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM processed_files")
+        return cursor.fetchone()[0]
 
 
 if __name__ == "__main__":

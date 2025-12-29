@@ -12,6 +12,11 @@
     
     "save_anomaly_snippets": false,
     "snippet_duration": 5.0,
-    "snippet_threshold": 2.5
+    "snippet_threshold": 2.5,
+    
+    "file_watch_mode": true,
+    "birdnet_stream_dir": "/home/ubuntu/BirdSongs/StreamData",
+    "file_watch_poll_interval": 1.0,
+    "file_settle_time": 2.0
 }
 

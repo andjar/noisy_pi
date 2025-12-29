@@ -240,16 +240,29 @@ init_database() {
 
 # Test audio capture
 test_audio() {
-    header "Testing Audio Capture"
+    header "Checking Audio Setup"
     
     cd "$INSTALL_DIR/capture"
     
-    log "Available audio devices:"
-    "$INSTALL_DIR/venv/bin/python3" capture_daemon.py --list-devices || true
+    # Check if BirdNET stream directory exists
+    CURRENT_USER=$(whoami)
+    BIRDNET_DIR="/home/${CURRENT_USER}/BirdSongs/StreamData"
+    
+    if [[ -d "${BIRDNET_DIR}" ]]; then
+        WAV_COUNT=$(find "${BIRDNET_DIR}" -name "*.wav" -type f 2>/dev/null | wc -l)
+        log "BirdNET StreamData found with ${WAV_COUNT} WAV files"
+        log "Noisy Pi will analyze these files (file-watch mode)"
+    else
+        log "BirdNET StreamData not found. Showing available audio devices for direct capture mode:"
+        "$INSTALL_DIR/venv/bin/python3" capture_daemon.py --list-devices || true
+        warn "File-watch mode requires BirdNET-Pi to be installed and recording."
+        warn "You can also switch to direct capture mode in the config."
+    fi
     
     log ""
-    log "If you see your microphone listed above, audio capture should work."
-    log "If not, check your PulseAudio configuration."
+    log "Mode can be changed in: $INSTALL_DIR/config/noisy.json"
+    log "  file_watch_mode: true  = Analyze BirdNET-Pi recordings (recommended)"
+    log "  file_watch_mode: false = Direct audio capture (may conflict with BirdNET)"
 }
 
 # Install systemd services
@@ -263,8 +276,19 @@ install_services() {
     log "Configuring services for user: $CURRENT_USER (UID: $CURRENT_UID)"
     log "Web dashboard will run on port: $WEB_PORT"
     
-    # Update config with selected port
+    # Update config with selected port and BirdNET directory
     sed -i "s/\"web_port\": 8080/\"web_port\": $WEB_PORT/" "$INSTALL_DIR/config/noisy.json"
+    
+    # Update BirdNET stream directory to actual user's home
+    BIRDNET_DIR="/home/${CURRENT_USER}/BirdSongs/StreamData"
+    sed -i "s|/home/ubuntu/BirdSongs/StreamData|${BIRDNET_DIR}|" "$INSTALL_DIR/config/noisy.json"
+    
+    if [[ -d "${BIRDNET_DIR}" ]]; then
+        log "BirdNET StreamData found at: ${BIRDNET_DIR}"
+    else
+        warn "BirdNET StreamData not found at: ${BIRDNET_DIR}"
+        warn "If BirdNET-Pi is installed, update birdnet_stream_dir in config."
+    fi
     
     # Create service files with correct user and port
     sudo sed "s/User=pi/User=$CURRENT_USER/g; s/Group=pi/Group=$CURRENT_USER/g; s|/run/user/1000|/run/user/$CURRENT_UID|g" \
