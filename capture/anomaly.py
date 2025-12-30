@@ -141,3 +141,4 @@ def trigger_baseline_update(mean_db: float):
     """Trigger baseline update for current hour."""
     baseline_updater.update_current_hour(mean_db)
 
+

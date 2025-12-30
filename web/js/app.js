@@ -661,7 +661,22 @@ function formatHz(value) {
 }
 
 function formatDateTime(timestamp) {
+    if (!timestamp) return '-';
+    
+    // Handle format like "20251230_165954" (YYYYMMDD_HHMMSS)
+    if (/^\d{8}_\d{6}$/.test(timestamp)) {
+        const year = timestamp.substring(0, 4);
+        const month = timestamp.substring(4, 6);
+        const day = timestamp.substring(6, 8);
+        const hour = timestamp.substring(9, 11);
+        const minute = timestamp.substring(11, 13);
+        const second = timestamp.substring(13, 15);
+        timestamp = `${year}-${month}-${day}T${hour}:${minute}:${second}`;
+    }
+    
     const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return timestamp; // Return original if parsing fails
+    
     return date.toLocaleString([], { 
         month: 'short', 
         day: 'numeric', 

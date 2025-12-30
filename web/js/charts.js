@@ -1,5 +1,5 @@
 /**
- * Noisy Pi - Chart Manager (Enhanced)
+ * Noisy Pi - Chart Manager (Enhanced with Zoom Sync)
  */
 
 class ChartManager {
@@ -8,6 +8,8 @@ class ChartManager {
         this.anomalyChart = null;
         this.hourlyChart = null;
         this.historyChart = null;
+        this.syncedCharts = []; // Charts to sync zoom
+        this.isZooming = false; // Prevent infinite sync loops
         
         this.chartDefaults = {
             responsive: true,
@@ -63,6 +65,77 @@ class ChartManager {
                 }
             }
         };
+    }
+
+    // Get zoom plugin config with sync callback
+    getZoomConfig(chartRef) {
+        const self = this;
+        return {
+            zoom: {
+                wheel: {
+                    enabled: true,
+                    modifierKey: null // No modifier needed
+                },
+                pinch: {
+                    enabled: true
+                },
+                drag: {
+                    enabled: true,
+                    backgroundColor: 'rgba(97, 175, 239, 0.2)',
+                    borderColor: '#61afef',
+                    borderWidth: 1
+                },
+                mode: 'x',
+                onZoom: ({ chart }) => {
+                    self.syncZoom(chart);
+                },
+                onZoomComplete: ({ chart }) => {
+                    self.syncZoom(chart);
+                }
+            },
+            pan: {
+                enabled: true,
+                mode: 'x',
+                onPan: ({ chart }) => {
+                    self.syncZoom(chart);
+                },
+                onPanComplete: ({ chart }) => {
+                    self.syncZoom(chart);
+                }
+            },
+            limits: {
+                x: { minRange: 60000 } // Minimum 1 minute range
+            }
+        };
+    }
+
+    // Sync zoom across all synced charts
+    syncZoom(sourceChart) {
+        if (this.isZooming) return;
+        this.isZooming = true;
+
+        const xScale = sourceChart.scales.x;
+        const min = xScale.min;
+        const max = xScale.max;
+
+        this.syncedCharts.forEach(chart => {
+            if (chart && chart !== sourceChart && chart.scales && chart.scales.x) {
+                chart.scales.x.options.min = min;
+                chart.scales.x.options.max = max;
+                chart.update('none');
+            }
+        });
+
+        this.isZooming = false;
+    }
+
+    // Reset zoom on all synced charts
+    resetZoom() {
+        this.syncedCharts.forEach(chart => {
+            if (chart && chart.resetZoom) {
+                chart.resetZoom();
+            }
+        });
     }
 
     // Sound levels chart
@@ -124,6 +197,10 @@ class ChartManager {
             },
             options: {
                 ...this.chartDefaults,
+                plugins: {
+                    ...this.chartDefaults.plugins,
+                    zoom: this.getZoomConfig()
+                },
                 scales: {
                     ...this.chartDefaults.scales,
                     y: {
@@ -138,6 +215,11 @@ class ChartManager {
                 }
             }
         });
+
+        // Add to synced charts
+        if (!this.syncedCharts.includes(this.levelsChart)) {
+            this.syncedCharts.push(this.levelsChart);
+        }
     }
 
     // Anomaly chart
@@ -174,25 +256,7 @@ class ChartManager {
                 ...this.chartDefaults,
                 plugins: {
                     ...this.chartDefaults.plugins,
-                    annotation: {
-                        annotations: {
-                            threshold: {
-                                type: 'line',
-                                yMin: 2.5,
-                                yMax: 2.5,
-                                borderColor: '#e06c75',
-                                borderWidth: 1,
-                                borderDash: [5, 5],
-                                label: {
-                                    display: true,
-                                    content: 'Threshold',
-                                    position: 'end',
-                                    color: '#e06c75',
-                                    font: { size: 9 }
-                                }
-                            }
-                        }
-                    }
+                    zoom: this.getZoomConfig()
                 },
                 scales: {
                     ...this.chartDefaults.scales,
@@ -210,9 +274,14 @@ class ChartManager {
                 }
             }
         });
+
+        // Add to synced charts
+        if (!this.syncedCharts.includes(this.anomalyChart)) {
+            this.syncedCharts.push(this.anomalyChart);
+        }
     }
 
-    // Hourly statistics chart
+    // Hourly statistics chart (not synced - different time scale)
     updateHourlyChart(data) {
         const ctx = document.getElementById('hourly-chart');
         if (!ctx) return;
@@ -341,6 +410,10 @@ class ChartManager {
             },
             options: {
                 ...this.chartDefaults,
+                plugins: {
+                    ...this.chartDefaults.plugins,
+                    zoom: this.getZoomConfig()
+                },
                 scales: {
                     ...this.chartDefaults.scales,
                     y: {
@@ -355,5 +428,12 @@ class ChartManager {
                 }
             }
         });
+    }
+}
+
+// Global function to reset zoom (called from UI)
+function resetChartZoom() {
+    if (chartManager) {
+        chartManager.resetZoom();
     }
 }

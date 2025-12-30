@@ -60,3 +60,4 @@ echo ""
 echo -e "${GREEN}Noisy Pi has been uninstalled.${NC}"
 echo ""
 
+

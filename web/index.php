@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
 </head>
 <body>
     <header>
@@ -75,12 +77,14 @@
                             <option value="24h" selected>Last 24 Hours</option>
                             <option value="7d">Last 7 Days</option>
                         </select>
+                        <button class="btn-small" onclick="resetChartZoom()" title="Reset Zoom">🔍 Reset</button>
                         <button class="btn-small" onclick="exportData('csv')" title="Export CSV">📥</button>
                     </div>
                 </div>
                 <div class="chart-container">
                     <canvas id="levels-chart"></canvas>
                 </div>
+                <p class="legend-hint">💡 Drag to zoom, scroll wheel to zoom, double-click to reset. Charts are synchronized.</p>
             </section>
             
             <!-- 7-Band Heatmap -->
