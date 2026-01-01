@@ -21,11 +21,47 @@ class BaselineModel:
         self.cache = {}  # Cache loaded baselines
         self.cache_ttl = 3600  # Refresh cache every hour
         self.last_cache_update = 0
+        self.global_baseline_cache = None
+        self.global_baseline_time = 0
     
     def _get_time_key(self, timestamp: int) -> Tuple[int, int]:
         """Get day-of-week and hour from timestamp."""
         dt = datetime.fromtimestamp(timestamp)
         return dt.weekday(), dt.hour
+    
+    def _get_global_baseline(self) -> Tuple[Optional[float], Optional[float], int]:
+        """
+        Get average baseline across all hours that have data.
+        Used as fallback when per-hour baseline doesn't have enough samples.
+        """
+        now = time.time()
+        
+        # Use cached value if fresh (5 minutes)
+        if self.global_baseline_cache and (now - self.global_baseline_time) < 300:
+            return self.global_baseline_cache
+        
+        avgs = []
+        stds = []
+        total_samples = 0
+        
+        for dow in range(7):
+            for hour in range(24):
+                avg, std, samples = db.get_baseline(dow, hour)
+                if samples >= 10:  # Lower threshold for global pooling
+                    avgs.append(avg)
+                    stds.append(std)
+                    total_samples += samples
+        
+        if not avgs:
+            return None, None, 0
+        
+        global_avg = sum(avgs) / len(avgs)
+        global_std = sum(stds) / len(stds)
+        
+        self.global_baseline_cache = (global_avg, global_std, total_samples)
+        self.global_baseline_time = now
+        
+        return global_avg, global_std, total_samples
     
     def get_baseline_for_time(self, timestamp: int) -> Optional[dict]:
         """Get baseline data for a specific timestamp."""
@@ -41,7 +77,10 @@ class BaselineModel:
         # Load from database
         avg, std, samples = db.get_baseline(day_of_week, hour)
         
-        if samples >= config.get_config_value('baseline_min_samples', 100):
+        # Use lower threshold (30 instead of 100) to reduce "sudden activation"
+        min_samples = config.get_config_value('baseline_min_samples', 30)
+        
+        if samples >= min_samples:
             baseline = {
                 'mean_db_avg': avg,
                 'mean_db_std': std,
@@ -63,6 +102,8 @@ class BaselineModel:
         Compute anomaly score for a measurement.
         
         Uses Z-score based on historical data for this time period.
+        Falls back to global baseline when per-hour data is insufficient,
+        preventing the "sudden activation" bias at whole hours.
         
         Args:
             timestamp: Unix timestamp of the measurement
@@ -79,12 +120,20 @@ class BaselineModel:
         baseline = self.get_baseline_for_time(timestamp)
         
         if baseline is None:
-            # Not enough data for baseline yet
-            return 0.0
-        
-        # Level-based anomaly (Z-score)
-        avg = baseline.get('mean_db_avg', -40)
-        std = baseline.get('mean_db_std', 10)
+            # Per-hour baseline not ready - use global baseline as fallback
+            # This prevents anomalies clustering when hour slots "activate"
+            global_avg, global_std, total_samples = self._get_global_baseline()
+            
+            if global_avg is None or total_samples < 50:
+                # Truly no data yet - can't compute anomaly
+                return 0.0
+            
+            avg = global_avg
+            std = global_std
+        else:
+            # Use per-hour baseline
+            avg = baseline.get('mean_db_avg', -40)
+            std = baseline.get('mean_db_std', 10)
         
         if std < 0.1:
             std = 0.1  # Prevent division by very small values
@@ -140,5 +189,6 @@ def get_anomaly_score(timestamp: int, mean_db: float, band_levels: dict = None) 
 def trigger_baseline_update(mean_db: float):
     """Trigger baseline update for current hour."""
     baseline_updater.update_current_hour(mean_db)
+
 
 
