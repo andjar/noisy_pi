@@ -43,7 +43,7 @@ SILENCE_MIN_DURATION = 0.5  # seconds
 
 # Anomaly detection
 ANOMALY_THRESHOLD = 2.5  # Z-score threshold
-BASELINE_MIN_SAMPLES = 100  # Minimum samples before baseline is valid
+BASELINE_WINDOW_SIZE = 100  # Rolling window size for baseline (number of recent samples)
 
 # Anomaly snippet settings
 SNIPPET_ENABLED = False
@@ -88,5 +88,5 @@ def get_anomaly_threshold():
 def get_snippet_enabled():
     return get_config_value('snippet_enabled', SNIPPET_ENABLED)
 
-def get_baseline_min_samples():
-    return get_config_value('baseline_min_samples', BASELINE_MIN_SAMPLES)
+def get_baseline_window_size():
+    return get_config_value('baseline_window_size', BASELINE_WINDOW_SIZE)

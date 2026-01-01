@@ -224,3 +224,22 @@ def get_recent_measurements(limit: int = 100):
             ORDER BY unix_time DESC
             LIMIT ?
         ''', (limit,)).fetchall()
+
+
+def get_recent_measurements_for_baseline(limit: int = 100, max_age_hours: int = 24):
+    """
+    Get recent measurements for baseline initialization.
+    Only returns successful measurements within the time window.
+    """
+    import time
+    cutoff = int(time.time()) - (max_age_hours * 3600)
+    
+    with get_connection() as conn:
+        rows = conn.execute('''
+            SELECT mean_db, unix_time FROM measurements
+            WHERE unix_time > ? AND mean_db IS NOT NULL AND status = 'ok'
+            ORDER BY unix_time DESC
+            LIMIT ?
+        ''', (cutoff, limit)).fetchall()
+        
+        return [dict(row) for row in rows]

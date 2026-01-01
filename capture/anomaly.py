@@ -1,194 +1,143 @@
 """
 Anomaly detection for Noisy Pi.
-Builds baseline models from historical data and scores new measurements.
+Uses a rolling window approach - no artificial hourly boundaries.
 """
-import numpy as np
 import time
-from datetime import datetime
-from typing import Optional, Tuple
+from collections import deque
+from typing import Optional
 
 from . import config
 from . import db
 
 
-class BaselineModel:
+class RollingBaseline:
     """
-    Maintains baseline statistics for anomaly detection.
-    Uses day-of-week and hour-of-day patterns.
+    Maintains a rolling window baseline for anomaly detection.
+    No hourly buckets - just a continuous moving average.
     """
     
-    def __init__(self):
-        self.cache = {}  # Cache loaded baselines
-        self.cache_ttl = 3600  # Refresh cache every hour
-        self.last_cache_update = 0
-        self.global_baseline_cache = None
-        self.global_baseline_time = 0
-    
-    def _get_time_key(self, timestamp: int) -> Tuple[int, int]:
-        """Get day-of-week and hour from timestamp."""
-        dt = datetime.fromtimestamp(timestamp)
-        return dt.weekday(), dt.hour
-    
-    def _get_global_baseline(self) -> Tuple[Optional[float], Optional[float], int]:
+    def __init__(self, window_size: int = 100):
         """
-        Get average baseline across all hours that have data.
-        Used as fallback when per-hour baseline doesn't have enough samples.
+        Args:
+            window_size: Number of recent measurements to keep in memory
         """
-        now = time.time()
-        
-        # Use cached value if fresh (5 minutes)
-        if self.global_baseline_cache and (now - self.global_baseline_time) < 300:
-            return self.global_baseline_cache
-        
-        avgs = []
-        stds = []
-        total_samples = 0
-        
-        for dow in range(7):
-            for hour in range(24):
-                avg, std, samples = db.get_baseline(dow, hour)
-                if samples >= 10:  # Lower threshold for global pooling
-                    avgs.append(avg)
-                    stds.append(std)
-                    total_samples += samples
-        
-        if not avgs:
-            return None, None, 0
-        
-        global_avg = sum(avgs) / len(avgs)
-        global_std = sum(stds) / len(stds)
-        
-        self.global_baseline_cache = (global_avg, global_std, total_samples)
-        self.global_baseline_time = now
-        
-        return global_avg, global_std, total_samples
+        self.window_size = window_size
+        self.values = deque(maxlen=window_size)
+        self.initialized = False
+        self._cached_stats = None
+        self._cache_valid_count = 0
     
-    def get_baseline_for_time(self, timestamp: int) -> Optional[dict]:
-        """Get baseline data for a specific timestamp."""
-        day_of_week, hour = self._get_time_key(timestamp)
-        
-        # Check cache
-        cache_key = (day_of_week, hour)
-        now = time.time()
-        
-        if cache_key in self.cache and (now - self.last_cache_update) < self.cache_ttl:
-            return self.cache[cache_key]
-        
-        # Load from database
-        avg, std, samples = db.get_baseline(day_of_week, hour)
-        
-        # Use lower threshold (30 instead of 100) to reduce "sudden activation"
-        min_samples = config.get_config_value('baseline_min_samples', 30)
-        
-        if samples >= min_samples:
-            baseline = {
-                'mean_db_avg': avg,
-                'mean_db_std': std,
-                'samples': samples
-            }
-            self.cache[cache_key] = baseline
-            self.last_cache_update = now
-            return baseline
-        
-        return None
+    def add_value(self, mean_db: float):
+        """Add a new measurement to the rolling window."""
+        if mean_db is None:
+            return
+        self.values.append(mean_db)
+        # Invalidate cache
+        self._cached_stats = None
     
-    def compute_anomaly_score(
-        self,
-        timestamp: int,
-        mean_db: float,
-        band_levels: dict = None
-    ) -> float:
+    def _compute_stats(self) -> tuple:
+        """Compute mean and standard deviation of current window."""
+        if len(self.values) < 5:
+            return None, None
+        
+        # Use cached value if still valid
+        if self._cached_stats and self._cache_valid_count == len(self.values):
+            return self._cached_stats
+        
+        values = list(self.values)
+        n = len(values)
+        mean = sum(values) / n
+        
+        # Sample standard deviation
+        if n > 1:
+            variance = sum((x - mean) ** 2 for x in values) / (n - 1)
+            std = variance ** 0.5
+        else:
+            std = 10.0  # Default
+        
+        self._cached_stats = (mean, std)
+        self._cache_valid_count = n
+        
+        return mean, std
+    
+    def get_baseline(self) -> tuple:
+        """Get current baseline (mean, std, sample_count)."""
+        mean, std = self._compute_stats()
+        return mean, std, len(self.values)
+    
+    def compute_anomaly_score(self, mean_db: float) -> float:
         """
-        Compute anomaly score for a measurement.
-        
-        Uses Z-score based on historical data for this time period.
-        Falls back to global baseline when per-hour data is insufficient,
-        preventing the "sudden activation" bias at whole hours.
+        Compute anomaly score using Z-score against rolling baseline.
         
         Args:
-            timestamp: Unix timestamp of the measurement
-            mean_db: Mean dB level
-            band_levels: Optional dict with band_low_db, band_mid_db, band_high_db
+            mean_db: Current measurement's mean dB level
         
         Returns:
-            Anomaly score (Z-score). Higher = more anomalous.
-            Values > 2.0 are typically flagged as anomalies.
+            Z-score. Higher = more anomalous. Values > 2.0 are flagged.
         """
         if mean_db is None:
             return 0.0
-            
-        baseline = self.get_baseline_for_time(timestamp)
         
-        if baseline is None:
-            # Per-hour baseline not ready - use global baseline as fallback
-            # This prevents anomalies clustering when hour slots "activate"
-            global_avg, global_std, total_samples = self._get_global_baseline()
-            
-            if global_avg is None or total_samples < 50:
-                # Truly no data yet - can't compute anomaly
-                return 0.0
-            
-            avg = global_avg
-            std = global_std
-        else:
-            # Use per-hour baseline
-            avg = baseline.get('mean_db_avg', -40)
-            std = baseline.get('mean_db_std', 10)
+        baseline_mean, baseline_std = self._compute_stats()
         
-        if std < 0.1:
-            std = 0.1  # Prevent division by very small values
+        if baseline_mean is None:
+            # Not enough data yet
+            return 0.0
         
-        level_zscore = abs(mean_db - avg) / std
+        if baseline_std < 0.5:
+            baseline_std = 0.5  # Minimum std to avoid over-sensitivity
         
-        # Could add band-based anomaly detection here
-        # For now, just use level
+        z_score = abs(mean_db - baseline_mean) / baseline_std
         
-        return float(round(level_zscore, 2))
-
-
-class BaselineUpdater:
-    """
-    Periodically updates baseline statistics from historical data.
-    """
+        return float(round(z_score, 2))
     
-    def __init__(self, lookback_days: int = 14):
-        self.lookback_days = lookback_days
-        self.last_update = {}  # Track last update per (day, hour)
-        self.update_interval = 3600  # Update at most once per hour
-    
-    def should_update(self, day_of_week: int, hour: int) -> bool:
-        """Check if baseline should be updated."""
-        key = (day_of_week, hour)
-        now = time.time()
-        
-        if key not in self.last_update:
-            return True
-        
-        return (now - self.last_update[key]) > self.update_interval
-    
-    def update_current_hour(self, mean_db: float):
-        """Update baseline for the current day/hour with new measurement."""
-        if mean_db is None:
+    def load_from_db(self, lookback_hours: int = 24):
+        """
+        Load recent measurements from database to initialize the window.
+        Called once at startup.
+        """
+        if self.initialized:
             return
+        
+        try:
+            measurements = db.get_recent_measurements_for_baseline(
+                limit=self.window_size,
+                max_age_hours=lookback_hours
+            )
             
-        dt = datetime.now()
-        db.update_baseline(dt.weekday(), dt.hour, mean_db)
-        self.last_update[(dt.weekday(), dt.hour)] = time.time()
+            for m in reversed(measurements):  # Oldest first
+                if m['mean_db'] is not None:
+                    self.values.append(m['mean_db'])
+            
+            self.initialized = True
+            
+            if len(self.values) > 0:
+                mean, std = self._compute_stats()
+                print(f"Loaded {len(self.values)} measurements into baseline "
+                      f"(mean={mean:.1f}dB, std={std:.1f}dB)")
+        except Exception as e:
+            print(f"Could not load baseline from DB: {e}")
+            self.initialized = True  # Don't retry
 
 
-# Global instances
-baseline_model = BaselineModel()
-baseline_updater = BaselineUpdater()
+# Global instance
+rolling_baseline = RollingBaseline(
+    window_size=config.get_config_value('baseline_window_size', 100)
+)
 
 
 def get_anomaly_score(timestamp: int, mean_db: float, band_levels: dict = None) -> float:
-    """Get anomaly score for a measurement."""
-    return baseline_model.compute_anomaly_score(timestamp, mean_db, band_levels)
+    """Get anomaly score for a measurement using rolling baseline."""
+    # Initialize from DB on first call
+    if not rolling_baseline.initialized:
+        rolling_baseline.load_from_db()
+    
+    return rolling_baseline.compute_anomaly_score(mean_db)
 
 
 def trigger_baseline_update(mean_db: float):
-    """Trigger baseline update for current hour."""
-    baseline_updater.update_current_hour(mean_db)
+    """Add measurement to rolling baseline."""
+    rolling_baseline.add_value(mean_db)
 
 
 
